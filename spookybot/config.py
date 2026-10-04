@@ -71,13 +71,9 @@ class VADConfig:
 @dataclass
 class VisionConfig:
     enabled: bool = _envb("SB_VISION", True)
-    model: str = _env(
-        "SB_IMX500_MODEL",
-        "/usr/share/imx500-models/imx500_network_ssd_mobilenetv2_fpnlite_320x320_pp.rpk",
-    )
-    labels: str = _env("SB_IMX500_LABELS", "/usr/share/imx500-models/coco_labels.txt")
+    # Compiled for the Hailo-8L on the AI HAT+ (h8l); ships with hailo-all.
+    model: str = _env("SB_HAILO_MODEL", "/usr/share/hailo-models/yolov8s_h8l.hef")
     threshold: float = _envf("SB_DETECT_THRESHOLD", 0.45)
-    person_label: str = "person"
     # A guest counts as "present" once their box is this fraction of frame height.
     # Keeps the head from greeting someone across the yard.
     min_box_height: float = _envf("SB_MIN_BOX_HEIGHT", 0.30)

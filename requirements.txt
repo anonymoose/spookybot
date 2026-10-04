@@ -18,7 +18,7 @@ adafruit-blinka>=8.0
 faster-whisper>=1.0
 
 # NOT pip-installable — install from apt so it matches the system libcamera:
-#   sudo apt install -y python3-picamera2 imx500-all imx500-tools
+#   sudo apt install -y python3-picamera2 hailo-all
 #
 # Piper (local TTS) is a binary, not a wheel:
 #   see README, "Local fallback" section

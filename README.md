@@ -1,11 +1,11 @@
 # Spookybot — conversational Halloween talking head
 
-A Raspberry Pi 5 + AI Camera animatronic that sees guests walk up, greets them
+A Raspberry Pi 5 + camera + Hailo AI HAT animatronic that sees guests walk up, greets them
 by their costume, holds a short conversation, and moves its jaw in sync with
 what it's saying.
 
 ```
-IMX500 AI Camera ──► person detection (on-sensor)
+IMX219 camera ──► person detection (YOLOv8 on Hailo-8L)
                      │
                      ├─► arrival/departure ──► state machine
                      ├─► pan/tilt tracking ──► servos
@@ -27,7 +27,7 @@ below follows from that.
 
 ```bash
 sudo apt update
-sudo apt install -y python3-picamera2 imx500-all imx500-tools \
+sudo apt install -y python3-picamera2 hailo-all \
                     python3-venv libportaudio2 i2c-tools
 sudo raspi-config nointeractive do_i2c 0     # enable I2C for the servo driver
 sudo reboot

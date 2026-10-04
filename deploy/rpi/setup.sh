@@ -12,7 +12,7 @@ PIPER_DIR=/opt/piper
 echo "== apt packages"
 sudo apt-get update -qq
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-  python3-picamera2 imx500-all imx500-tools python3-venv libportaudio2 i2c-tools
+  python3-picamera2 hailo-all python3-venv libportaudio2 i2c-tools
 
 echo "== I2C (servo driver)"
 if [ "$(sudo raspi-config nonint get_i2c)" != 0 ]; then

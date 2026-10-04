@@ -299,19 +299,17 @@ def test_vision_box_parsing():
     cfg.enabled = False
     v = Vision(cfg)
     v.cfg = cfg
-    v._labels = ["person", "bicycle", "car"]
-    v._imx500 = types.SimpleNamespace(get_input_size=lambda: (320, 320))
 
-    # y0, x0, y1, x1 normalized; one close person, one distant, one car
-    boxes = np.array([[0.20, 0.40, 0.90, 0.60],
-                      [0.45, 0.10, 0.55, 0.15],
-                      [0.10, 0.70, 0.95, 0.99]])
-    scores = np.array([0.9, 0.8, 0.9])
-    classes = np.array([0, 0, 2])
-    outputs = (boxes[None], scores[None], classes[None])
+    # Hailo NMS layout: per-class lists of [y0, x0, y1, x1, score], normalized.
+    # One close person, one distant person, one car (class 2).
+    empty = [np.zeros((0, 5)) for _ in range(80)]
+    outputs = list(empty)
+    outputs[0] = np.array([[0.20, 0.40, 0.90, 0.60, 0.9],
+                           [0.45, 0.10, 0.55, 0.15, 0.8]])
+    outputs[2] = np.array([[0.10, 0.70, 0.95, 0.99, 0.9]])
 
     for _ in range(cfg.arrive_frames):
-        v._process(outputs, {})
+        v._process(outputs)
     g = v.snapshot()
     check("person detected as present", g.present)
     check("distant person filtered out", g.count == 1, f"count={g.count}")
@@ -321,15 +319,14 @@ def test_vision_box_parsing():
     check("box_height correct", abs(g.box_height - 0.70) < 0.01,
           f"{g.box_height:.2f}")
 
-    empty = (np.zeros((1, 0, 4)), np.zeros((1, 0)), np.zeros((1, 0)))
     for _ in range(cfg.depart_frames):
-        v._process(empty, {})
+        v._process(empty)
     check("departure detected", not v.snapshot().present)
 
     # hysteresis: a single dropped frame must not clear presence
     for _ in range(cfg.arrive_frames):
-        v._process(outputs, {})
-    v._process(empty, {})
+        v._process(outputs)
+    v._process(empty)
     check("one missed frame doesn't clear presence", v.snapshot().present)
 
 

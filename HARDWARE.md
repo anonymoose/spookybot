@@ -16,8 +16,8 @@ So the audio chain has to be: **USB mic → Pi → USB or I2S out → amplified 
                     ┌─────────────────────────────┐
                     │      Raspberry Pi 5         │
                     │                             │
-  AI Camera ────────┤ CSI   person detect (sensor)│
-  (IMX500)          │       ├─ arrival/departure  │
+  Camera ───────────┤ CSI   person detect (Hailo) │
+  (IMX219)          │       ├─ arrival/departure  │
                     │       ├─ pan/tilt target    │
                     │       └─ costume still      │
                     │                             │

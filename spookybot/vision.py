@@ -1,8 +1,10 @@
-"""IMX500 AI Camera: presence detection, head tracking, and costume stills.
+"""Camera + Hailo AI HAT: presence detection, head tracking, and costume stills.
 
-Inference runs on the sensor, so the Pi receives boxes rather than frames. That
-is what makes this affordable to run continuously alongside audio — the CPU
-stays free for VAD and playback instead of burning cores on a detector.
+The camera (IMX219) has no on-board inference, so the ISP hands a small copy of
+each frame straight to the Hailo, which runs YOLOv8 with NMS on-chip. The Pi
+receives boxes rather than running a detector itself. That is what makes this
+affordable to run continuously alongside audio — the CPU stays free for VAD
+and playback instead of burning cores on a detector.
 """
 from __future__ import annotations
 
@@ -16,11 +18,13 @@ log = logging.getLogger(__name__)
 
 try:
     from picamera2 import Picamera2
-    from picamera2.devices import IMX500
-    from picamera2.devices.imx500 import NetworkIntrinsics
+    from picamera2.devices import Hailo
     _HAVE_CAMERA = True
 except Exception:  # pragma: no cover
     _HAVE_CAMERA = False
+
+# The Hailo model zoo detectors are trained on COCO-80, where person is class 0.
+PERSON_CLASS = 0
 
 
 @dataclass
@@ -40,8 +44,7 @@ class Vision:
         self._lock = threading.Lock()
         self._running = False
         self._picam = None
-        self._imx500 = None
-        self._labels: list[str] = []
+        self._hailo = None
         self._hits = 0
         self._misses = 0
 
@@ -49,28 +52,27 @@ class Vision:
             log.info("Vision disabled by config")
             return
         if not _HAVE_CAMERA:
-            log.warning("picamera2/IMX500 unavailable — vision disabled")
+            log.warning("picamera2/Hailo unavailable — vision disabled")
             return
 
         self._start()
 
     def _start(self) -> None:
-        self._imx500 = IMX500(self.cfg.model)
-        intrinsics = self._imx500.network_intrinsics or NetworkIntrinsics()
-        intrinsics.task = "object detection"
-        try:
-            with open(self.cfg.labels, "r", encoding="utf-8") as fh:
-                self._labels = [ln.strip() for ln in fh if ln.strip()]
-        except OSError:
-            self._labels = intrinsics.labels or []
-        intrinsics.update_with_defaults()
+        self._hailo = Hailo(self.cfg.model)
+        model_h, model_w, _ = self._hailo.get_input_shape()
 
-        self._picam = Picamera2(self._imx500.camera_num)
+        self._picam = Picamera2()
         config = self._picam.create_preview_configuration(
-            main={"size": (1280, 720)}, buffer_count=8
+            main={"size": (1280, 720)},
+            # The ISP scales the full field of view into the model's square
+            # input. The squash doesn't matter: boxes come back normalized, so
+            # they map straight onto the main stream. libcamera names formats
+            # by register order, so "BGR888" is R,G,B in memory — what YOLO wants.
+            lores={"size": (model_w, model_h), "format": "BGR888"},
+            buffer_count=8,
         )
-        self._picam.start(config)
-        self._imx500.show_network_fw_progress_bar()
+        self._picam.configure(config)
+        self._picam.start()
         time.sleep(1.0)
 
         self._running = True
@@ -81,37 +83,24 @@ class Vision:
     def _loop(self) -> None:
         while self._running:
             try:
-                metadata = self._picam.capture_metadata()
-                outputs = self._imx500.get_outputs(metadata, add_batch=True)
-                if outputs is None:
-                    time.sleep(0.03)
-                    continue
-                self._process(outputs, metadata)
+                frame = self._picam.capture_array("lores")
+                self._process(self._hailo.run(frame))
             except Exception as exc:
                 log.debug("vision frame failed: %s", exc)
                 time.sleep(0.1)
 
-    def _process(self, outputs, metadata) -> None:
-        boxes, scores, classes = outputs[0][0], outputs[1][0], outputs[2][0]
-        input_w, input_h = self._imx500.get_input_size()
-
+    def _process(self, outputs) -> None:
+        # Hailo NMS output: one array per class of [y0, x0, y1, x1, score] rows,
+        # normalized. Only the person list matters.
         people = []
-        for box, score, cls in zip(boxes, scores, classes):
+        for det in outputs[PERSON_CLASS]:
+            y0, x0, y1, x1, score = (float(v) for v in det[:5])
             if score < self.cfg.threshold:
                 continue
-            idx = int(cls)
-            label = self._labels[idx] if idx < len(self._labels) else str(idx)
-            if label != self.cfg.person_label:
-                continue
-            y0, x0, y1, x1 = box  # IMX500 postprocess emits y-first, normalized
-            height = abs(float(y1) - float(y0))
+            height = abs(y1 - y0)
             if height < self.cfg.min_box_height:
                 continue
-            people.append((
-                (float(x0) + float(x1)) / 2.0,
-                (float(y0) + float(y1)) / 2.0,
-                height,
-            ))
+            people.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0, height))
 
         if people:
             # Track the nearest guest — largest box wins.
@@ -161,5 +150,10 @@ class Vision:
         if self._picam is not None:
             try:
                 self._picam.stop()
+            except Exception:
+                pass
+        if self._hailo is not None:
+            try:
+                self._hailo.close()
             except Exception:
                 pass
