@@ -1,0 +1,19 @@
+[Unit]
+Description=Halloween talking head
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/spookybot
+EnvironmentFile=/home/pi/spookybot/.env
+ExecStart=/home/pi/spookybot/.venv/bin/python -m spookybot.main
+Restart=always
+RestartSec=5
+# Audio callbacks miss deadlines when the scheduler is busy; a small nice
+# bump keeps playback clean when the LLM call and the camera thread collide.
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target
