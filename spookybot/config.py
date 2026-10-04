@@ -117,7 +117,13 @@ class ServoConfig:
 
 @dataclass
 class BrainConfig:
-    model: str = _env("SB_MODEL", "claude-sonnet-5")
+    # Picked by measured first-sentence latency vs. humor on the Pi; see README.
+    model: str = _env("SB_MODEL", "claude-sonnet-5-5")
+    # Fastest no-reasoning settings differ per model: "between_tools" turns
+    # thinking off on Sonnet 5.5, Sonnet 5 wants "disabled", and Haiku 4.5
+    # takes neither field (set both empty).
+    thinking: str = _env("SB_THINKING", "between_tools")
+    effort: str = _env("SB_EFFORT", "low")
     max_tokens: int = _envi("SB_MAX_TOKENS", 160)   # short answers = low latency
     history_turns: int = _envi("SB_HISTORY_TURNS", 8)
     # How long a conversation stays "warm" before the head forgets this guest.

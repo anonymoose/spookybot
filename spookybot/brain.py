@@ -103,17 +103,21 @@ class Brain:
         self.conversation.messages.append({"role": "user", "content": content})
         self._trim()
 
+        # A talking head can't afford a silent reasoning pause, and thinking
+        # would eat max_tokens. (Sampling params are gone on current models.)
+        extra: dict = {}
+        if self.cfg.thinking:
+            extra["thinking"] = {"type": self.cfg.thinking}
+        if self.cfg.effort:
+            extra["output_config"] = {"effort": self.cfg.effort}
+
         buffer = ""
         full = ""
         try:
             with self.client.messages.stream(
                 model=self.cfg.model,
                 max_tokens=self.cfg.max_tokens,
-                # Sampling params are gone on current models (400 if sent).
-                # Thinking off + low effort: a talking head can't afford a
-                # silent reasoning pause, and thinking would eat max_tokens.
-                thinking={"type": "disabled"},
-                output_config={"effort": "low"},
+                **extra,
                 system=self.persona,
                 messages=self.conversation.messages,
             ) as stream:

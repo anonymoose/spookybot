@@ -95,6 +95,21 @@ Pi itself: slower, but it keeps talking.
 | Greets people across the yard | Raise `SB_MIN_BOX_HEIGHT` toward 0.45 |
 | Hears itself, talks in a loop | Keep `SB_HALF_DUPLEX=true` |
 
+### Model choice
+
+Measured from the Pi with `persona.md`, 18 calls each (median time to the
+first full sentence, which is when the head starts talking):
+
+| `SB_MODEL` | First sentence | Verdict |
+|---|---|---|
+| `claude-haiku-4-5` | 0.8 s | Fastest, but flatter jokes and still slips in spoken `*stage directions*` |
+| **`claude-sonnet-5-5`** | **1.0 s** | **Default.** Funniest of the fast options, clean spoken output |
+| `claude-sonnet-5` | 1.2 s | Good, but replies come as one long sentence, so nothing streams early |
+| `claude-opus-5-5` | 1.9 s | Funny, too slow for a party |
+
+Each model needs its own fastest settings: see `SB_THINKING` / `SB_EFFORT`
+in `.env.example`.
+
 ## Barge-in (letting guests interrupt)
 
 Off by default (`SB_HALF_DUPLEX=true` hard-mutes the mic while speaking). It's
