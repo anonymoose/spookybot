@@ -65,11 +65,22 @@ threshold tuned in a quiet garage makes the head respond to the entire room.
 
 ## Running it for real
 
+Deployment is driven from a dev machine with the `Makefile` (needs SSH keys to
+both hosts; override with `make RPI=host MINI=host ...`):
+
 ```bash
-sudo cp spookybot.service /etc/systemd/system/
-sudo systemctl enable --now spookybot
-journalctl -u spookybot -f
+make mini      # speech server: Whisper STT + Kokoro TTS (speaches, Docker) on mini
+make rpi       # sync code + .env to the Pi, install deps, (re)start the service
+make           # both
+make status    # service + container state
+make logs      # follow the bot's journal   (make logs-mini for the speech server)
 ```
+
+`deploy/mini/setup.sh` and `deploy/rpi/setup.sh` hold every install step and
+are safe to re-run. The service runs as `kbedwell` from `~/spookybot`.
+
+If mini is unreachable the bot falls back to faster-whisper and Piper on the
+Pi itself: slower, but it keeps talking.
 
 ## Tuning
 

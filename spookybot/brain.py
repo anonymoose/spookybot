@@ -109,7 +109,11 @@ class Brain:
             with self.client.messages.stream(
                 model=self.cfg.model,
                 max_tokens=self.cfg.max_tokens,
-                temperature=self.cfg.temperature,
+                # Sampling params are gone on current models (400 if sent).
+                # Thinking off + low effort: a talking head can't afford a
+                # silent reasoning pause, and thinking would eat max_tokens.
+                thinking={"type": "disabled"},
+                output_config={"effort": "low"},
                 system=self.persona,
                 messages=self.conversation.messages,
             ) as stream:

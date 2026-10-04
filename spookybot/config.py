@@ -123,7 +123,6 @@ class ServoConfig:
 class BrainConfig:
     model: str = _env("SB_MODEL", "claude-sonnet-5")
     max_tokens: int = _envi("SB_MAX_TOKENS", 160)   # short answers = low latency
-    temperature: float = _envf("SB_TEMPERATURE", 1.0)
     history_turns: int = _envi("SB_HISTORY_TURNS", 8)
     # How long a conversation stays "warm" before the head forgets this guest.
     conversation_timeout_s: float = _envf("SB_CONVO_TIMEOUT_S", 45.0)
@@ -146,6 +145,12 @@ class TTSConfig:
     voice_id: str = _env("SB_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
     model_id: str = _env("SB_TTS_MODEL", "eleven_flash_v2_5")
     openai_voice: str = _env("SB_OPENAI_VOICE", "onyx")
+    # Any OpenAI-compatible server works here (set OPENAI_BASE_URL). Local
+    # speaches/Kokoro: SB_OPENAI_TTS_MODEL=speaches-ai/Kokoro-82M-v1.0-ONNX.
+    openai_model: str = _env("SB_OPENAI_TTS_MODEL", "gpt-4o-mini-tts")
+    # Rate the server returns PCM at. OpenAI is fixed at 24000; speaches honors
+    # a sample_rate request, so set this to SB_PLAYBACK_RATE to skip resampling.
+    openai_rate: int = _envi("SB_OPENAI_TTS_RATE", 24000)
     piper_model: str = _env("SB_PIPER_MODEL", "/opt/piper/en_US-lessac-medium.onnx")
     stability: float = _envf("SB_TTS_STABILITY", 0.45)
     similarity: float = _envf("SB_TTS_SIMILARITY", 0.75)

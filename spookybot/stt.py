@@ -33,7 +33,8 @@ class Transcriber:
         self._local = None
         if cfg.backend == "openai":
             from openai import OpenAI
-            self._client = OpenAI()
+            # Fail fast so the local fallback kicks in while the guest is still there.
+            self._client = OpenAI(timeout=10.0, max_retries=0)
         elif cfg.backend == "faster-whisper":
             self._load_local()
         else:

@@ -5,10 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=pi
-WorkingDirectory=/home/pi/spookybot
-EnvironmentFile=/home/pi/spookybot/.env
-ExecStart=/home/pi/spookybot/.venv/bin/python -m spookybot.main
+User=kbedwell
+SupplementaryGroups=audio video i2c gpio
+WorkingDirectory=/home/kbedwell/spookybot
+# Sourced through bash rather than EnvironmentFile= because .env carries
+# trailing "# comments", which systemd would keep as part of the value.
+ExecStart=/bin/bash -c 'set -a; . ./.env; set +a; exec .venv/bin/python -m spookybot.main'
 Restart=always
 RestartSec=5
 # Audio callbacks miss deadlines when the scheduler is busy; a small nice

@@ -1,0 +1,23 @@
+# Speech server for spookybot: Whisper STT + Kokoro TTS behind an
+# OpenAI-compatible API (https://speaches.ai). The Pi points OPENAI_BASE_URL here.
+name: spookybot-speech
+
+services:
+  speaches:
+    image: ghcr.io/speaches-ai/speaches:latest-cpu
+    container_name: spookybot-speaches
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      # Keep models resident; reloading Whisper on every request costs seconds.
+      - STT_MODEL_TTL=-1
+      - TTS_MODEL_TTL=-1
+      - WHISPER__COMPUTE_TYPE=int8
+      - WHISPER__CPU_THREADS=12
+      - LOG_LEVEL=info
+    volumes:
+      - hf-hub-cache:/home/ubuntu/.cache/huggingface/hub
+
+volumes:
+  hf-hub-cache:

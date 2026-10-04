@@ -12,6 +12,8 @@ import os
 import subprocess
 from typing import Iterator
 
+import numpy as np
+
 from .config import TTSConfig
 
 log = logging.getLogger(__name__)
@@ -27,7 +29,8 @@ class Speech:
             self._requests = requests
         elif cfg.backend == "openai":
             from openai import OpenAI
-            self._client = OpenAI()
+            # Fail fast so the local fallback kicks in while the guest is still there.
+            self._client = OpenAI(timeout=10.0, max_retries=0)
         elif cfg.backend == "piper":
             if not os.path.exists(cfg.piper_model):
                 raise FileNotFoundError(f"Piper model not found: {cfg.piper_model}")
@@ -74,13 +77,21 @@ class Speech:
                 yield chunk
 
     def _openai(self, text: str) -> Iterator[bytes]:
+        rate = self.cfg.openai_rate
+        # OpenAI itself only speaks 24 kHz and rejects unknown fields, so only
+        # ask for a rate when pointed at a server that can honor it.
+        extra = {"sample_rate": rate} if rate != 24000 else None
+        resampler = _Resampler(rate, self.sample_rate) if rate != self.sample_rate else None
         with self._client.audio.speech.with_streaming_response.create(
-            model="gpt-4o-mini-tts",
+            model=self.cfg.openai_model,
             voice=self.cfg.openai_voice,
             input=text,
-            response_format="pcm",  # 24 kHz signed 16-bit mono
+            response_format="pcm",  # signed 16-bit mono
+            extra_body=extra,
         ) as resp:
             for chunk in resp.iter_bytes(4096):
+                if resampler is not None:
+                    chunk = resampler.feed(chunk)
                 if chunk:
                     yield chunk
 
@@ -97,3 +108,35 @@ class Speech:
                 break
             yield chunk
         proc.wait()
+
+
+class _Resampler:
+    """Streaming linear resampler for 16-bit mono PCM.
+
+    Playback runs at one fixed rate, so a backend that returns a different rate
+    would otherwise play pitched and slowed. Linear interpolation is plenty for
+    speech, and carrying one sample across chunks keeps the seams click-free.
+    """
+
+    def __init__(self, src_rate: int, dst_rate: int) -> None:
+        self.step = src_rate / dst_rate
+        self.pos = 0.0
+        self.prev = np.zeros(0, dtype=np.float32)
+        self.odd = b""
+
+    def feed(self, chunk: bytes) -> bytes:
+        data = self.odd + chunk
+        n = len(data) // 2 * 2
+        self.odd = data[n:]
+        x = np.concatenate([self.prev, np.frombuffer(data[:n], dtype=np.int16)
+                            .astype(np.float32)])
+        if len(x) < 2:
+            self.prev = x
+            return b""
+        last = len(x) - 1
+        idx = np.arange(self.pos, last, self.step)
+        out = np.interp(idx, np.arange(len(x)), x)
+        # Re-base the next read position so x[last] becomes index 0 next time.
+        self.pos = (idx[-1] + self.step if len(idx) else self.pos) - last
+        self.prev = x[last:]
+        return np.round(out).astype(np.int16).tobytes()
