@@ -388,6 +388,92 @@ def test_orchestrator():
         bot.shutdown()
 
 
+def test_vision_degrades():
+    print("\nvision degrades instead of crashing")
+    import spookybot.vision as vmod
+    from spookybot.config import VisionConfig
+
+    class FakePicam:
+        def __init__(self):
+            self.streams = None
+        def create_preview_configuration(self, **streams):
+            self.streams = streams
+            return streams
+        def configure(self, cfg): pass
+        def start(self): pass
+        def stop(self): pass
+        def close(self): pass
+
+    class NoHailo:
+        def __init__(self, model):
+            raise RuntimeError("HAILO_DRIVER_NOT_INSTALLED")
+
+    class NoCamera:
+        def __init__(self):
+            raise RuntimeError("no cameras available")
+
+    saved = (vmod._HAVE_CAMERA, getattr(vmod, "Hailo", None),
+             getattr(vmod, "Picamera2", None), vmod.time.sleep)
+    vmod._HAVE_CAMERA = True
+    vmod.time.sleep = lambda s: None
+    try:
+        cfg = VisionConfig()
+        cfg.enabled = True
+
+        vmod.Hailo, vmod.Picamera2 = NoHailo, FakePicam
+        v = vmod.Vision(cfg)
+        check("missing Hailo keeps the camera", v._picam is not None)
+        check("missing Hailo means not detecting", not v.detecting)
+        check("camera-only asks for no detector stream",
+              v._picam.streams is not None and "lores" not in v._picam.streams)
+        v.close()
+
+        vmod.Picamera2 = NoCamera
+        v = vmod.Vision(cfg)
+        check("missing camera disables vision", v._picam is None and not v.detecting)
+    finally:
+        (vmod._HAVE_CAMERA, vmod.Hailo, vmod.Picamera2, vmod.time.sleep) = saved
+
+
+def test_voice_arrival():
+    print("\nvoice-activated arrival (no presence detection)")
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.listen_timeout_s = 1.0
+    from spookybot.main import SpookyBot
+
+    bot = SpookyBot(CONFIG)
+    try:
+        check("vision reports no detection", not bot.vision.detecting)
+        spoken, calls = [], []
+        real_say, real_respond = bot.say, bot.brain.respond
+        bot.say = lambda s: (spoken.extend(list(s)), real_say(iter([])))[0]
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            calls.append((text, image_jpeg, scene_note)),
+            real_respond(text, image_jpeg=image_jpeg, scene_note=scene_note))[1]
+        bot.vision.capture_jpeg = lambda: b"\xff\xd8fake-jpeg"
+
+        bot.mic.flush()
+        check("silence starts nothing", not bot.start_by_voice())
+        check("no greeting to an empty room", spoken == [], f"{spoken[:1]}")
+
+        block = bot.mic.block
+        frames = ([np.zeros(block, dtype=np.int16)] * 3 +
+                  [(np.random.randn(block) * 4000).astype(np.int16)] * 30 +
+                  [np.zeros(block, dtype=np.int16)] * 45)
+        for f in frames:
+            try:
+                bot.mic._q.put_nowait(f)
+            except Exception:
+                pass
+        check("speaking starts a conversation", bot.start_by_voice())
+        check("guest got a reply", len(spoken) > 0, f"{spoken[:1]}")
+        check("first reply carries the costume still",
+              bool(calls) and calls[0][1] == b"\xff\xd8fake-jpeg")
+    finally:
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -424,7 +510,8 @@ def main():
                test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_mic_gating, test_orchestrator):
+               test_vision_degrades, test_mic_gating,
+               test_orchestrator, test_voice_arrival):
         try:
             fn()
         except Exception as exc:

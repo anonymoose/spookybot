@@ -93,6 +93,13 @@ def test_vision() -> bool:
         if vision._picam is None:
             print("[vision] FAILED: camera not initialized")
             return False
+        if not vision.detecting:
+            print("[vision] Camera-only mode (no Hailo): costume stills work, "
+                  "person detection is off. Check `lspci | grep -i hailo`.")
+            jpeg = vision.capture_jpeg()
+            print(f"[vision] Snapshot: {len(jpeg)/1024:.0f} KB"
+                  if jpeg else "[vision] Snapshot failed")
+            return bool(jpeg)
         seen = False
         for _ in range(100):
             guest = vision.snapshot()

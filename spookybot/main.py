@@ -9,6 +9,10 @@ LISTEN     mic open, waiting for an utterance
 THINK      STT + first token from Claude
 SPEAK      streaming TTS out the speaker, jaw driven by the audio buffer
            -> back to LISTEN for a follow-up, or IDLE on timeout
+
+Without presence detection (no Hailo, or vision off) the head can't see anyone
+arrive, so IDLE listens instead: a guest arrives by speaking, and GREET is
+skipped. The first reply carries the costume still when the camera works.
 """
 from __future__ import annotations
 
@@ -140,18 +144,23 @@ class SpookyBot:
         else:
             self.say(iter([random.choice(GREETINGS)]))
 
-    def converse_turn(self) -> bool:
-        """One listen/think/speak cycle. Returns False when the guest is done."""
+    def converse_turn(self, audio=None, image=None, scene_note=None) -> bool:
+        """One listen/think/speak cycle. Returns False when the guest is done.
+
+        Pass `audio` to answer an utterance that was already captured, and
+        `image`/`scene_note` to show the model the costume with this turn.
+        """
         self.state = "LISTEN"
         self._track_guest()
 
-        audio = self.detector.capture(
-            self.mic,
-            timeout_s=self.cfg.listen_timeout_s,
-            on_speech_start=lambda: setattr(self, "state", "LISTEN"),
-        )
         if audio is None:
-            return False
+            audio = self.detector.capture(
+                self.mic,
+                timeout_s=self.cfg.listen_timeout_s,
+                on_speech_start=lambda: setattr(self, "state", "LISTEN"),
+            )
+            if audio is None:
+                return False
 
         self.state = "THINK"
         try:
@@ -166,33 +175,63 @@ class SpookyBot:
             return True
 
         log.info("HEARD: %s", text)
-        self.say(self.brain.respond(text))
+        self.say(self.brain.respond(text, image_jpeg=image, scene_note=scene_note))
+        return True
+
+    def start_by_voice(self) -> bool:
+        """Voice-activated arrival, for when nothing can see guests walk up.
+
+        Greeting on a timer instead would talk to an empty room all night, so
+        wait for someone to speak and answer them. Returns True if a guest
+        spoke and a conversation started.
+        """
+        self.state = "IDLE"
+        audio = self.detector.capture(
+            self.mic,
+            timeout_s=self.cfg.listen_timeout_s,
+            on_speech_start=lambda: setattr(self, "state", "LISTEN"),
+        )
+        if audio is None:
+            return False
+
+        self.brain.reset()
+        image = note = None
+        if self.cfg.vision.costume_vision:
+            image = self.vision.capture_jpeg()
+            if image:
+                note = ("A guest just walked up and spoke to you. This is what "
+                        "your camera sees. Answer them, and work in something "
+                        "specific about their costume if you can identify it.")
+        self.converse_turn(audio=audio, image=image, scene_note=note)
         return True
 
     # -- main loop ----------------------------------------------------------
 
     def run(self) -> None:
-        vision_on = self.cfg.vision.enabled and self.vision._picam is not None
+        detecting = self.vision.detecting
+        if not detecting:
+            log.info("No presence detection — voice-activated mode: guests "
+                     "start a conversation by speaking")
         while self.running:
             try:
-                guest = self.vision.snapshot()
-                # Without a working camera, fall back to voice-activated mode:
-                # anyone who talks loudly enough starts a conversation.
-                arrived = guest.present if vision_on else True
+                if detecting:
+                    if not self.vision.snapshot().present:
+                        self.state = "IDLE"
+                        time.sleep(0.2)
+                        continue
 
-                if not arrived:
-                    self.state = "IDLE"
-                    time.sleep(0.2)
+                    cooled = (time.monotonic() - self._last_greet
+                              > self.cfg.greet_cooldown_s)
+                    if cooled:
+                        # Speaking first is what gets people to engage; a prop
+                        # that waits to be addressed mostly gets looked at and
+                        # ignored.
+                        self.greet()
+                elif not self.start_by_voice():
                     continue
 
-                cooled = time.monotonic() - self._last_greet > self.cfg.greet_cooldown_s
-                if cooled:
-                    # Speaking first is what gets people to engage; a prop that
-                    # waits to be addressed mostly gets looked at and ignored.
-                    self.greet()
-
                 while self.running and self.converse_turn():
-                    if vision_on and not self.vision.snapshot().present:
+                    if detecting and not self.vision.snapshot().present:
                         log.info("Guest left mid-conversation")
                         break
 

@@ -94,6 +94,7 @@ Pi itself: slower, but it keeps talking.
 | Jaw hangs open / chatters | Lower `SB_JAW_ALPHA` toward 0.4 |
 | Greets people across the yard | Raise `SB_MIN_BOX_HEIGHT` toward 0.45 |
 | Hears itself, talks in a loop | Keep `SB_HALF_DUPLEX=true` |
+| Never greets first; waits to be spoken to | Hailo not detected, so it's in voice-activated mode. Check `lspci \| grep -i hailo` and the PCIe ribbon |
 
 ### Model choice
 

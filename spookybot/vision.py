@@ -5,6 +5,11 @@ each frame straight to the Hailo, which runs YOLOv8 with NMS on-chip. The Pi
 receives boxes rather than running a detector itself. That is what makes this
 affordable to run continuously alongside audio — the CPU stays free for VAD
 and playback instead of burning cores on a detector.
+
+Without the Hailo (HAT removed, cable loose) the camera still runs in
+camera-only mode: costume stills work, presence detection doesn't, and the
+orchestrator switches to voice-activated arrivals. Neither a missing HAT nor a
+missing camera takes the bot down.
 """
 from __future__ import annotations
 
@@ -45,6 +50,9 @@ class Vision:
         self._running = False
         self._picam = None
         self._hailo = None
+        # True only while the Hailo is producing detections; False means guest
+        # presence is unknown, not that nobody is there.
+        self.detecting = False
         self._hits = 0
         self._misses = 0
 
@@ -55,30 +63,44 @@ class Vision:
             log.warning("picamera2/Hailo unavailable — vision disabled")
             return
 
-        self._start()
+        try:
+            self._hailo = Hailo(self.cfg.model)
+        except Exception as exc:
+            log.warning("Hailo unavailable (%s) — camera-only mode: costume "
+                        "stills, no presence detection", exc)
+            self._hailo = None
 
-    def _start(self) -> None:
-        self._hailo = Hailo(self.cfg.model)
-        model_h, model_w, _ = self._hailo.get_input_shape()
+        try:
+            self._start_camera()
+        except Exception as exc:
+            log.error("Camera failed to start (%s) — vision disabled", exc)
+            self.close()
+            self._picam = None
+            self._hailo = None
+            return
 
+        if self._hailo is not None:
+            self.detecting = True
+            self._running = True
+            self._thread = threading.Thread(target=self._loop, daemon=True,
+                                            name="vision")
+            self._thread.start()
+            log.info("Vision running with model %s", self.cfg.model)
+
+    def _start_camera(self) -> None:
         self._picam = Picamera2()
-        config = self._picam.create_preview_configuration(
-            main={"size": (1280, 720)},
+        streams: dict[str, dict] = {"main": {"size": (1280, 720)}}
+        if self._hailo is not None:
+            model_h, model_w, _ = self._hailo.get_input_shape()
             # The ISP scales the full field of view into the model's square
             # input. The squash doesn't matter: boxes come back normalized, so
             # they map straight onto the main stream. libcamera names formats
             # by register order, so "BGR888" is R,G,B in memory — what YOLO wants.
-            lores={"size": (model_w, model_h), "format": "BGR888"},
-            buffer_count=8,
-        )
+            streams["lores"] = {"size": (model_w, model_h), "format": "BGR888"}
+        config = self._picam.create_preview_configuration(**streams, buffer_count=8)
         self._picam.configure(config)
         self._picam.start()
         time.sleep(1.0)
-
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True, name="vision")
-        self._thread.start()
-        log.info("Vision running with model %s", self.cfg.model)
 
     def _loop(self) -> None:
         while self._running:
@@ -147,11 +169,13 @@ class Vision:
 
     def close(self) -> None:
         self._running = False
+        self.detecting = False
         if self._picam is not None:
-            try:
-                self._picam.stop()
-            except Exception:
-                pass
+            for step in (self._picam.stop, self._picam.close):
+                try:
+                    step()
+                except Exception:
+                    pass
         if self._hailo is not None:
             try:
                 self._hailo.close()
