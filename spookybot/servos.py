@@ -11,6 +11,7 @@ PCA9685 V+ terminal, and tie its ground to the Pi's ground.
 from __future__ import annotations
 
 import logging
+import math
 import threading
 import time
 
@@ -26,6 +27,15 @@ try:
     _HAVE_HW = True
 except Exception:  # pragma: no cover - dev machines have no I2C
     _HAVE_HW = False
+
+
+def eye_level(t: float, period_s: float) -> float:
+    """Eye brightness 0..1 for a slow breathing fade: dark at t=0, brightest at
+    half a period, dark again at a full period. Squared because perceived LED
+    brightness is far from linear in duty cycle; a raw cosine looks like it
+    sits at full brightness and blinks off."""
+    phase = (1.0 - math.cos(2.0 * math.pi * t / period_s)) / 2.0
+    return phase * phase
 
 
 class _NullServo:
@@ -65,6 +75,15 @@ class ServoBus:
             self._targets[name] = limits.rest_deg
 
         self._limits = {"jaw": cfg.jaw, "pan": cfg.pan, "tilt": cfg.tilt}
+
+        self._eyes = None
+        self._eyes_t0 = time.monotonic()
+        servo_channels = {lim.channel for lim in self._limits.values()}
+        if cfg.eyes_channel in servo_channels:
+            log.warning("SB_EYES_CHANNEL=%d is a servo channel — eyes disabled",
+                        cfg.eyes_channel)
+        elif self._pca is not None and cfg.eyes_channel >= 0:
+            self._eyes = self._pca.channels[cfg.eyes_channel]
         self._running = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="servos")
         self._thread.start()
@@ -97,6 +116,11 @@ class ServoBus:
     def close(self) -> None:
         self._running = False
         self._thread.join(timeout=1.0)
+        if self._eyes is not None:
+            try:
+                self._eyes.duty_cycle = 0
+            except Exception:
+                pass
         self.rest()
         time.sleep(0.3)
         if self._pca is not None:
@@ -124,4 +148,11 @@ class ServoBus:
                         self._servos[name].angle = new
                     except Exception as exc:  # a single bad write shouldn't kill it
                         log.debug("servo write failed on %s: %s", name, exc)
+            if self._eyes is not None:
+                level = eye_level(time.monotonic() - self._eyes_t0,
+                                  self.cfg.eyes_period_s)
+                try:
+                    self._eyes.duty_cycle = int(level * 0xFFFF)
+                except Exception as exc:
+                    log.debug("eye write failed: %s", exc)
             time.sleep(max(0.0, period - (time.perf_counter() - t0)))

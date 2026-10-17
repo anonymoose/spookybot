@@ -111,6 +111,11 @@ class ServoConfig:
     track_alpha: float = _envf("SB_TRACK_ALPHA", 0.12)
     # Jaw responsiveness. Higher = snappier, more chatter. 0.55 looks organic.
     jaw_alpha: float = _envf("SB_JAW_ALPHA", 0.55)
+    # LED eyes on a spare channel, driven from its PWM pin (through a MOSFET if
+    # the pin's 3.3 V can't light them). -1 disables.
+    eyes_channel: int = _envi("SB_EYES_CHANNEL", 15)
+    # One full fade, dark -> bright -> dark, in seconds.
+    eyes_period_s: float = _envf("SB_EYES_PERIOD_S", 2.0)
 
 
 # ---------------------------------------------------------------- brain ----

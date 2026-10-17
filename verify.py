@@ -190,6 +190,18 @@ def test_servo_mapping():
         bus.close()
 
 
+def test_eye_fade():
+    print("\neye fade")
+    from spookybot.servos import eye_level
+    check("dark at the start of a cycle", eye_level(0.0, 2.0) < 0.001)
+    check("full brightness half way through", abs(eye_level(1.0, 2.0) - 1.0) < 0.001)
+    check("dark again after one 2s cycle", eye_level(2.0, 2.0) < 0.001)
+    samples = [eye_level(i / 100, 2.0) for i in range(201)]
+    check("always within 0..1", all(0.0 <= v <= 1.0 for v in samples))
+    check("brightens through the first half",
+          all(a <= b for a, b in zip(samples[:100], samples[1:101])))
+
+
 def test_jaw_envelope():
     print("\njaw envelope shaping")
     from spookybot.audio_io import Speaker
@@ -507,7 +519,7 @@ def main():
     print("spookybot headless verification")
     print("=" * 60)
     for fn in (test_config, test_device_matching, test_servo_mapping,
-               test_jaw_envelope, test_vad_state_machine,
+               test_eye_fade, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
                test_vision_degrades, test_mic_gating,
