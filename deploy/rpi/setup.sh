@@ -23,8 +23,19 @@ fi
 echo "== python venv"
 # --system-site-packages: picamera2 comes from apt, built against system libcamera.
 [ -d .venv ] || python3 -m venv .venv --system-site-packages
-.venv/bin/pip install -q --upgrade pip
-.venv/bin/pip install -q -r requirements.txt
+
+# Debian's python3-send2trash (visible through system site-packages) carries a
+# legacy dependency marker that modern pip can't parse and warns about on every
+# run. It's macOS-only and harmless, so drop exactly those three lines. pipefail
+# still surfaces pip's own exit status; the `|| true` only covers grep finding
+# nothing to print.
+pip_install() {
+  .venv/bin/pip install -q "$@" 2>&1 | {
+    grep -v -E 'Error parsing dependencies of send2trash|sys-platform \(=="darwin"\)|^ +~\^$' || true
+  }
+}
+pip_install --upgrade pip
+pip_install -r requirements.txt
 
 echo "== piper (local TTS fallback)"
 if [ ! -x "$PIPER_DIR/piper" ]; then
