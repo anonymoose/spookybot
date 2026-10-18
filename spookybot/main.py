@@ -108,7 +108,7 @@ class SpookyBot:
             for sentence in sentences:
                 if not sentence.strip():
                     continue
-                log.info("SAY: %s", sentence)
+                log.info("VOICE SAY: %s", sentence)
                 for chunk in self.tts.stream(sentence):
                     self.speaker.feed(chunk)
                     spoke_anything = True
@@ -166,7 +166,7 @@ class SpookyBot:
         try:
             text = self.stt.transcribe(audio)
         except Exception as exc:
-            log.error("STT failed: %s", exc)
+            log.error("VOICE STT failed: %s", exc)
             self.say(iter([random.choice(CONFUSED)]))
             return True
 
@@ -174,7 +174,7 @@ class SpookyBot:
             self.say(iter([random.choice(CONFUSED)]))
             return True
 
-        log.info("HEARD: %s", text)
+        log.info("VOICE HEARD: %s", text)
         self.say(self.brain.respond(text, image_jpeg=image, scene_note=scene_note))
         return True
 
@@ -210,7 +210,7 @@ class SpookyBot:
     def run(self) -> None:
         detecting = self.vision.detecting
         if not detecting:
-            log.info("No presence detection — voice-activated mode: guests "
+            log.info("VISION no presence detection — voice-activated mode: guests "
                      "start a conversation by speaking")
         while self.running:
             try:
@@ -232,7 +232,7 @@ class SpookyBot:
 
                 while self.running and self.converse_turn():
                     if detecting and not self.vision.snapshot().present:
-                        log.info("Guest left mid-conversation")
+                        log.info("VISION guest left mid-conversation")
                         break
 
                 self.state = "IDLE"

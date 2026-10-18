@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import logging
+import time
 import wave
 
 import numpy as np
@@ -49,11 +50,20 @@ class Transcriber:
                                    compute_type="int8")
 
     def transcribe(self, audio: np.ndarray) -> str:
+        model = (self.cfg.openai_model if self.cfg.backend == "openai"
+                 else f"local {self.cfg.local_model}")
+        log.info("VOICE STT -> %s: %.1fs of audio", model, len(audio) / self.sample_rate)
+        t0 = time.monotonic()
+        text = self._transcribe(audio)
+        log.info("VOICE STT done in %.0f ms: %r", (time.monotonic() - t0) * 1000, text)
+        return text
+
+    def _transcribe(self, audio: np.ndarray) -> str:
         if self.cfg.backend == "openai":
             try:
                 return self._transcribe_hosted(audio)
             except Exception as exc:
-                log.warning("Hosted STT failed (%s); falling back to local", exc)
+                log.warning("VOICE hosted STT failed (%s); falling back to local", exc)
                 if self._local is None:
                     self._load_local()
                 return self._transcribe_local(audio)

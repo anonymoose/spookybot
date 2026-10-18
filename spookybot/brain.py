@@ -39,6 +39,33 @@ frightening to a small kid, nothing cruel about anyone's appearance or body.
 unless they just told you.
 """
 
+# USD per million tokens (input, output), Anthropic list prices as of 2026-09.
+# Cache writes bill at 1.25x input, cache reads at 0.1x. Only used for the
+# CHAT log line; a model missing here logs tokens without a cost.
+_PRICES = {
+    "claude-opus-5-5": (4.00, 20.00),
+    "claude-sonnet-5-5": (2.00, 10.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+}
+
+
+def call_cost(model: str, usage) -> float | None:
+    """Dollar cost of one call from its usage block, or None if unpriced."""
+    # Longest matching prefix, so "claude-sonnet-5-5" doesn't price as
+    # "claude-sonnet-5" and dated IDs still match their family.
+    keys = [k for k in _PRICES if model.startswith(k)]
+    if not keys:
+        return None
+    price_in, price_out = _PRICES[max(keys, key=len)]
+    cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
+    cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+    return (usage.input_tokens * price_in
+            + cache_write * price_in * 1.25
+            + cache_read * price_in * 0.1
+            + usage.output_tokens * price_out) / 1_000_000
+
+
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[.!?…])$")
 
 
@@ -62,6 +89,8 @@ class Brain:
         self.client = Anthropic()
         self.persona = self._load_persona()
         self.conversation = Conversation()
+        self.calls = 0
+        self.spent = 0.0      # dollars since the bot started
 
     def _load_persona(self) -> str:
         path = self.cfg.persona_file
@@ -111,8 +140,16 @@ class Brain:
         if self.cfg.effort:
             extra["output_config"] = {"effort": self.cfg.effort}
 
+        log.info("CHAT -> %s: %r%s (%d messages in context)",
+                 self.cfg.model, f"{prefix}{user_text}",
+                 f" + image {len(image_jpeg) // 1024} KB" if image_jpeg else "",
+                 len(self.conversation.messages))
+
         buffer = ""
         full = ""
+        t0 = time.monotonic()
+        first_ms = None
+        final = None
         try:
             with self.client.messages.stream(
                 model=self.cfg.model,
@@ -122,6 +159,8 @@ class Brain:
                 messages=self.conversation.messages,
             ) as stream:
                 for token in stream.text_stream:
+                    if first_ms is None:
+                        first_ms = (time.monotonic() - t0) * 1000
                     buffer += token
                     full += token
                     while True:
@@ -132,8 +171,9 @@ class Brain:
                         buffer = buffer[match.end():]
                         if sentence:
                             yield sentence
+                final = stream.get_final_message()
         except Exception as exc:
-            log.error("LLM call failed: %s", exc)
+            log.error("CHAT call failed: %s", exc)
             if not full:
                 yield "My wires are crossed. Ask me again."
                 return
@@ -141,11 +181,32 @@ class Brain:
         if buffer.strip():
             yield buffer.strip()
 
+        self._log_reply(full, final, first_ms, (time.monotonic() - t0) * 1000)
+
         if full.strip():
             self.conversation.messages.append(
                 {"role": "assistant", "content": full.strip()})
         self._trim()
         self.conversation.touch()
+
+    def _log_reply(self, text: str, final, first_ms, total_ms: float) -> None:
+        log.info("CHAT <- %r", text.strip())
+        usage = getattr(final, "usage", None)
+        if usage is None:
+            return
+        self.calls += 1
+        cost = call_cost(self.cfg.model, usage)
+        if cost is not None:
+            self.spent += cost
+        cached = ((getattr(usage, "cache_read_input_tokens", 0) or 0)
+                  + (getattr(usage, "cache_creation_input_tokens", 0) or 0))
+        log.info("CHAT usage: %d in%s / %d out tokens, stop=%s, first token %s, "
+                 "%.0f ms total, %s (session: %d calls, $%.4f)",
+                 usage.input_tokens, f" (+{cached} cached)" if cached else "",
+                 usage.output_tokens, getattr(final, "stop_reason", "?"),
+                 f"{first_ms:.0f} ms" if first_ms is not None else "n/a", total_ms,
+                 f"${cost:.5f}" if cost is not None else "cost unknown",
+                 self.calls, self.spent)
 
     def _trim(self) -> None:
         """Bound the context: cap turns, and keep only the newest image.

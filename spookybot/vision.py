@@ -31,6 +31,10 @@ except Exception:  # pragma: no cover
 # The Hailo model zoo detectors are trained on COCO-80, where person is class 0.
 PERSON_CLASS = 0
 
+# How often the detection loop reports that it's alive and what it sees, so
+# "is the camera even working?" is answered by the log rather than a test run.
+STATUS_INTERVAL_S = 30.0
+
 
 @dataclass
 class Guest:
@@ -55,25 +59,30 @@ class Vision:
         self.detecting = False
         self._hits = 0
         self._misses = 0
+        self._frames = 0
+        self._errors = 0
+        self._last_error = ""
+        self._best_score = 0.0
+        self._status_t0 = time.monotonic()
 
         if not cfg.enabled:
-            log.info("Vision disabled by config")
+            log.info("VISION disabled by config")
             return
         if not _HAVE_CAMERA:
-            log.warning("picamera2/Hailo unavailable — vision disabled")
+            log.warning("VISION picamera2/Hailo unavailable — vision disabled")
             return
 
         try:
             self._hailo = Hailo(self.cfg.model)
         except Exception as exc:
-            log.warning("Hailo unavailable (%s) — camera-only mode: costume "
+            log.warning("VISION Hailo unavailable (%s) — camera-only mode: costume "
                         "stills, no presence detection", exc)
             self._hailo = None
 
         try:
             self._start_camera()
         except Exception as exc:
-            log.error("Camera failed to start (%s) — vision disabled", exc)
+            log.error("VISION camera failed to start (%s) — vision disabled", exc)
             self.close()
             self._picam = None
             self._hailo = None
@@ -85,7 +94,9 @@ class Vision:
             self._thread = threading.Thread(target=self._loop, daemon=True,
                                             name="vision")
             self._thread.start()
-            log.info("Vision running with model %s", self.cfg.model)
+            log.info("VISION detection started: model %s, threshold %.2f, "
+                     "min box height %.2f", self.cfg.model, self.cfg.threshold,
+                     self.cfg.min_box_height)
 
     def _start_camera(self) -> None:
         self._picam = Picamera2()
@@ -108,8 +119,28 @@ class Vision:
                 frame = self._picam.capture_array("lores")
                 self._process(self._hailo.run(frame))
             except Exception as exc:
-                log.debug("vision frame failed: %s", exc)
+                self._errors += 1
+                self._last_error = str(exc)
+                log.debug("VISION frame failed: %s", exc)
                 time.sleep(0.1)
+            self._report_status()
+
+    def _report_status(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._status_t0
+        if elapsed < STATUS_INTERVAL_S:
+            return
+        with self._lock:
+            present, count = self.guest.present, self.guest.count
+        errors = (f", {self._errors} failed frames (last: {self._last_error})"
+                  if self._errors else "")
+        log.info("VISION status: %.0f fps, %s, best person score %.2f%s",
+                 self._frames / elapsed,
+                 f"guest present ({count} in view)" if present else "nobody present",
+                 self._best_score, errors)
+        self._frames = self._errors = 0
+        self._best_score = 0.0
+        self._status_t0 = now
 
     def _process(self, outputs) -> None:
         # Hailo NMS output: one array per class of [y0, x0, y1, x1, score] rows,
@@ -117,34 +148,45 @@ class Vision:
         people = []
         for det in outputs[PERSON_CLASS]:
             y0, x0, y1, x1, score = (float(v) for v in det[:5])
+            self._best_score = max(self._best_score, score)
             if score < self.cfg.threshold:
                 continue
             height = abs(y1 - y0)
             if height < self.cfg.min_box_height:
                 continue
-            people.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0, height))
+            people.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0, height, score))
 
+        self._frames += 1
         if people:
             # Track the nearest guest — largest box wins.
             people.sort(key=lambda p: p[2], reverse=True)
-            cx, cy, h = people[0]
+            cx, cy, h, score = people[0]
             self._hits += 1
             self._misses = 0
+            arrived = False
             with self._lock:
                 self.guest.count = len(people)
                 self.guest.center_x = cx
                 self.guest.center_y = cy
                 self.guest.box_height = h
                 self.guest.last_seen = time.monotonic()
-                if self._hits >= self.cfg.arrive_frames:
-                    self.guest.present = True
+                if self._hits >= self.cfg.arrive_frames and not self.guest.present:
+                    self.guest.present = arrived = True
+            if arrived:
+                log.info("VISION guest arrived: %d in view, nearest at (%.2f, %.2f), "
+                         "box height %.2f, score %.2f", len(people), cx, cy, h, score)
         else:
             self._misses += 1
             self._hits = 0
             if self._misses >= self.cfg.depart_frames:
+                left = False
                 with self._lock:
+                    left = self.guest.present
                     self.guest.present = False
                     self.guest.count = 0
+                if left:
+                    log.info("VISION guest left: nobody in view for %d frames",
+                             self._misses)
 
     # -- public -------------------------------------------------------------
 
@@ -162,12 +204,16 @@ class Vision:
             image.thumbnail((640, 640))
             buf = io.BytesIO()
             image.convert("RGB").save(buf, format="JPEG", quality=quality)
-            return buf.getvalue()
+            jpeg = buf.getvalue()
+            log.info("VISION costume still captured: %d KB", len(jpeg) // 1024)
+            return jpeg
         except Exception as exc:
-            log.debug("snapshot failed: %s", exc)
+            log.warning("VISION costume still failed: %s", exc)
             return None
 
     def close(self) -> None:
+        if self.detecting:
+            log.info("VISION detection stopped")
         self._running = False
         self.detecting = False
         if self._picam is not None:

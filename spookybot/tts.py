@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import time
 from typing import Iterator
 
 import numpy as np
@@ -38,6 +39,28 @@ class Speech:
             raise ValueError(f"unknown TTS backend: {cfg.backend}")
 
     def stream(self, text: str) -> Iterator[bytes]:
+        log.info("VOICE TTS -> %s: %r", self._describe(), text)
+        t0 = time.monotonic()
+        first_ms = None
+        nbytes = 0
+        for chunk in self._stream(text):
+            if first_ms is None:
+                first_ms = (time.monotonic() - t0) * 1000
+            nbytes += len(chunk)
+            yield chunk
+        log.info("VOICE TTS done: %.1fs of audio, first audio after %s, %.0f ms total",
+                 nbytes / 2 / self.sample_rate,
+                 f"{first_ms:.0f} ms" if first_ms is not None else "never",
+                 (time.monotonic() - t0) * 1000)
+
+    def _describe(self) -> str:
+        if self.cfg.backend == "elevenlabs":
+            return f"elevenlabs {self.cfg.model_id}"
+        if self.cfg.backend == "openai":
+            return f"{self.cfg.openai_model} voice={self.cfg.openai_voice}"
+        return "piper"
+
+    def _stream(self, text: str) -> Iterator[bytes]:
         try:
             if self.cfg.backend == "elevenlabs":
                 yield from self._elevenlabs(text)
@@ -46,11 +69,11 @@ class Speech:
             else:
                 yield from self._piper(text)
         except Exception as exc:
-            log.error("TTS failed (%s); trying local Piper", exc)
+            log.error("VOICE TTS failed (%s); trying local Piper", exc)
             try:
                 yield from self._piper(text)
             except Exception as exc2:
-                log.error("Local TTS also failed: %s", exc2)
+                log.error("VOICE local TTS also failed: %s", exc2)
 
     # -- backends -----------------------------------------------------------
 

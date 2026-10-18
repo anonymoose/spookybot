@@ -94,6 +94,11 @@ class _Stream:
     def text_stream(self):
         for c in self.chunks:
             yield c
+    def get_final_message(self):
+        usage = types.SimpleNamespace(input_tokens=900, output_tokens=40,
+                                      cache_creation_input_tokens=0,
+                                      cache_read_input_tokens=0)
+        return types.SimpleNamespace(usage=usage, stop_reason="end_turn")
 class _Messages:
     def stream(self, **kw):
         _Messages.last_kwargs = kw
@@ -200,6 +205,20 @@ def test_eye_fade():
     check("always within 0..1", all(0.0 <= v <= 1.0 for v in samples))
     check("brightens through the first half",
           all(a <= b for a, b in zip(samples[:100], samples[1:101])))
+
+
+def test_chat_cost():
+    print("\nchat cost accounting")
+    from spookybot.brain import call_cost
+    usage = types.SimpleNamespace(input_tokens=900, output_tokens=40,
+                                  cache_creation_input_tokens=0,
+                                  cache_read_input_tokens=0)
+    check("sonnet-5-5 priced at $2/$10", abs(call_cost("claude-sonnet-5-5", usage) - 0.0022) < 1e-9)
+    check("sonnet-5 isn't mistaken for sonnet-5-5 (or vice versa)",
+          call_cost("claude-sonnet-5", usage) == call_cost("claude-sonnet-5-5", usage))
+    check("dated model IDs match their family",
+          abs(call_cost("claude-haiku-4-5-20251001", usage) - 0.0011) < 1e-9)
+    check("unknown model has no cost", call_cost("some-other-model", usage) is None)
 
 
 def test_jaw_envelope():
@@ -519,7 +538,7 @@ def main():
     print("spookybot headless verification")
     print("=" * 60)
     for fn in (test_config, test_device_matching, test_servo_mapping,
-               test_eye_fade, test_jaw_envelope, test_vad_state_machine,
+               test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
                test_vision_degrades, test_mic_gating,
