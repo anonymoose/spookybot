@@ -74,7 +74,8 @@ make rpi       # sync code + .env to the Pi, install deps, (re)start the service
 make           # both
 make status    # service + container state
 make logs      # follow the bot's journal   (make logs-mini for the speech server)
-make logs tag=VOICE   # one stream: VOICE (speech in/out), VISION, CHAT (Claude, tokens, cost), JAW
+make logs tag=VOICE   # one stream: VOICE (speech in/out), VISION, CHAT (Claude, tokens, cost), MOTION
+make logs tag="MOTION JAW"   # one servo: MOTION JAW, MOTION PAN, MOTION TILT
 ```
 
 `deploy/mini/setup.sh` and `deploy/rpi/setup.sh` hold every install step and

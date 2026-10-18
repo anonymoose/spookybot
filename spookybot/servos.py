@@ -149,11 +149,11 @@ class ServoBus:
                     except Exception as exc:  # a single bad write shouldn't kill it
                         log.debug("servo write failed on %s: %s", name, exc)
                         continue
-                    if name == "jaw":
-                        lim = self._limits["jaw"]
-                        span = (lim.max_deg - lim.min_deg) or 1.0
-                        log.info("JAW %.1f° (%.0f%% open)", new,
-                                 100.0 * (new - lim.min_deg) / span)
+                    lim = self._limits[name]
+                    span = (lim.max_deg - lim.min_deg) or 1.0
+                    log.info("MOTION %s %.1f° (%.0f%% %s)", name.upper(), new,
+                             100.0 * (new - lim.min_deg) / span,
+                             "open" if name == "jaw" else "of range")
             if self._eyes is not None:
                 level = eye_level(time.monotonic() - self._eyes_t0,
                                   self.cfg.eyes_period_s)

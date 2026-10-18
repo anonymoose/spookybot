@@ -28,7 +28,8 @@ status:
 	ssh $(MINI) 'docker ps --filter name=spookybot-speaches --format "{{.Names}}: {{.Status}}"'
 
 # make logs            follow everything
-# make logs tag=VOICE  follow one stream: VOICE, VISION, CHAT or JAW
+# make logs tag=VOICE  follow one stream: VOICE, VISION, CHAT or MOTION
+# make logs tag="MOTION JAW"   one servo: MOTION JAW, MOTION PAN, MOTION TILT
 logs:
 ifdef tag
 	ssh -t $(RPI) "journalctl -u spookybot -f -o cat --grep ': $(shell echo '$(tag)' | tr a-z A-Z) '"
