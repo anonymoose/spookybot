@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Audition Kokoro voices on mini's speech server before picking one for the bot.
 
-Runs on your dev machine and plays each sample through its speakers. Nothing on
-mini or the Pi changes; when you find one you like, set SB_OPENAI_VOICE (and
-SB_TTS_SPEED) in .env and run `make rpi`.
+Run it on your dev machine to hear samples through its speakers, or on the Pi
+to hear them through the bot's own speaker (the card named by SB_OUTPUT_DEVICE
+is used automatically when it's attached; stop the service first, since the
+bot holds that speaker). Nothing on mini or the Pi changes; when you find one
+you like, set SB_OPENAI_VOICE (and SB_TTS_SPEED) in .env and run `make rpi`.
 
     scripts/audition.py                          # the shortlist, at .env's speed
     scripts/audition.py --voice bm_george        # one voice, no loop
@@ -34,15 +36,40 @@ ENGLISH = ("a", "b")
 ENV_FILE = pathlib.Path(__file__).resolve().parent.parent / ".env"
 
 
+def env_value(key: str) -> str | None:
+    """A setting from the project's .env, minus any trailing comment."""
+    try:
+        for line in ENV_FILE.read_text().splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].split("#")[0].strip()
+    except OSError:
+        pass
+    return None
+
+
 def env_speed() -> float:
     """SB_TTS_SPEED from the project's .env, so samples match the bot."""
     try:
-        for line in ENV_FILE.read_text().splitlines():
-            if line.startswith("SB_TTS_SPEED="):
-                return float(line.split("=", 1)[1].split("#")[0].strip())
-    except (OSError, ValueError):
-        pass
-    return 1.0
+        return float(env_value("SB_TTS_SPEED") or 1.0)
+    except ValueError:
+        return 1.0
+
+
+def bot_speaker() -> str | None:
+    """ALSA device for the bot's speaker if it's attached to this machine.
+
+    On the Pi the system default output is HDMI, so a plain `aplay` would play
+    into a monitor rather than the skull. plughw converts rate and channels
+    for the stereo-only USB adapter.
+    """
+    name = env_value("SB_OUTPUT_DEVICE")
+    if not name or not shutil.which("aplay"):
+        return None
+    cards = subprocess.run(["aplay", "-l"], capture_output=True, text=True).stdout
+    for line in cards.splitlines():
+        if line.startswith("card ") and name.lower() in line.lower():
+            return f"plughw:{line.split()[1].rstrip(':')},0"
+    return None
 
 
 def english_voices(url: str) -> list[str]:
@@ -63,7 +90,13 @@ def synthesize(url: str, voice: str, text: str, speed: float) -> bytes:
         return resp.read()
 
 
-def play_local(wav: bytes) -> None:
+def play_local(wav: bytes, device: str | None) -> None:
+    if device:
+        result = subprocess.run(["aplay", "-q", "-D", device], input=wav, check=False)
+        if result.returncode != 0:
+            print(f"   (playback on {device} failed — if this is the Pi, is the "
+                  "spookybot service running? `sudo systemctl stop spookybot` first)")
+        return
     for player in (["aplay", "-q"], ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", "-"]):
         if shutil.which(player[0]):
             subprocess.run(player, input=wav, check=False)
@@ -82,7 +115,8 @@ def play_on_pi(wav: bytes, host: str) -> None:
               "`make stop` first)")
 
 
-def audition(voice: str, args, speed: float, out_dir: pathlib.Path | None) -> bool:
+def audition(voice: str, args, speed: float, out_dir: pathlib.Path | None,
+             device: str | None = None) -> bool:
     """Synthesize one voice and play or save it. False if the server refused it."""
     print(f"== {voice}", flush=True)
     try:
@@ -97,7 +131,7 @@ def audition(voice: str, args, speed: float, out_dir: pathlib.Path | None) -> bo
     elif args.on_pi:
         play_on_pi(wav, args.on_pi)
     else:
-        play_local(wav)
+        play_local(wav, device)
     return True
 
 
@@ -121,10 +155,13 @@ def main() -> int:
     out_dir = pathlib.Path(args.save) if args.save else None
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
+    device = None if (out_dir or args.on_pi) else bot_speaker()
+    if device:
+        print(f"Playing on the bot's speaker ({env_value('SB_OUTPUT_DEVICE')}, {device})")
 
     if args.voice:
         print(f"Speed {speed:g}: {args.text!r}")
-        ok = audition(args.voice, args, speed, out_dir)
+        ok = audition(args.voice, args, speed, out_dir, device)
         if ok and out_dir:
             print(f"Saved {out_dir / (args.voice + '.wav')}")
         return 0 if ok else 1
@@ -140,7 +177,7 @@ def main() -> int:
     print(f"Speed {speed:g}: {args.text!r}")
     saved = 0
     for voice in voices:
-        if audition(voice, args, speed, out_dir) and out_dir:
+        if audition(voice, args, speed, out_dir, device) and out_dir:
             saved += 1
 
     if out_dir:
