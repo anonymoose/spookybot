@@ -113,6 +113,21 @@ first full sentence, which is when the head starts talking):
 Each model needs its own fastest settings: see `SB_THINKING` / `SB_EFFORT`
 in `.env.example`.
 
+### Voice
+
+The voice is Kokoro on mini: `SB_OPENAI_VOICE` picks one of its voices
+(`am_` American male, `bm_` British male, `af_`/`bf_` female) and
+`SB_TTS_SPEED` sets the pace (1.0 normal, 0.8 slower, 1.2 brisker; Piper,
+the offline fallback, follows the same speed). Audition from your dev machine:
+
+```bash
+scripts/audition.py                       # shortlist of male voices
+scripts/audition.py --voice bm_george --speed 0.85 --text "Come closer."
+scripts/audition.py --list                # every English voice
+```
+
+Then set the two values in `.env` and `make rpi`.
+
 ## Barge-in (letting guests interrupt)
 
 Off by default (`SB_HALF_DUPLEX=true` hard-mutes the mic while speaking). It's

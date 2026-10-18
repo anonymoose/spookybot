@@ -152,6 +152,9 @@ class TTSConfig:
     voice_id: str = _env("SB_VOICE_ID", "onwK4e9ZLuTAKqWW03F9")
     model_id: str = _env("SB_TTS_MODEL", "eleven_flash_v2_5")
     openai_voice: str = _env("SB_OPENAI_VOICE", "onyx")
+    # Speaking rate for every backend: 1.0 normal, 0.8 slower and more
+    # deliberate, 1.2 brisker. Kokoro/OpenAI accept 0.25-4.0; keep it near 1.
+    speed: float = _envf("SB_TTS_SPEED", 1.0)
     # Any OpenAI-compatible server works here (set OPENAI_BASE_URL). Local
     # speaches/Kokoro: SB_OPENAI_TTS_MODEL=speaches-ai/Kokoro-82M-v1.0-ONNX.
     openai_model: str = _env("SB_OPENAI_TTS_MODEL", "gpt-4o-mini-tts")

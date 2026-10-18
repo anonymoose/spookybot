@@ -57,7 +57,8 @@ class Speech:
         if self.cfg.backend == "elevenlabs":
             return f"elevenlabs {self.cfg.model_id}"
         if self.cfg.backend == "openai":
-            return f"{self.cfg.openai_model} voice={self.cfg.openai_voice}"
+            return (f"{self.cfg.openai_model} voice={self.cfg.openai_voice} "
+                    f"speed={self.cfg.speed:g}")
         return "piper"
 
     def _stream(self, text: str) -> Iterator[bytes]:
@@ -89,6 +90,7 @@ class Speech:
                 "voice_settings": {
                     "stability": self.cfg.stability,
                     "similarity_boost": self.cfg.similarity,
+                    "speed": self.cfg.speed,
                 },
             },
             stream=True,
@@ -110,6 +112,7 @@ class Speech:
             voice=self.cfg.openai_voice,
             input=text,
             response_format="pcm",  # signed 16-bit mono
+            speed=self.cfg.speed,
             extra_body=extra,
         ) as resp:
             for chunk in resp.iter_bytes(4096):
@@ -120,7 +123,9 @@ class Speech:
 
     def _piper(self, text: str) -> Iterator[bytes]:
         proc = subprocess.Popen(
-            ["piper", "--model", self.cfg.piper_model, "--output-raw"],
+            # Piper's knob is phoneme duration, the inverse of speed.
+            ["piper", "--model", self.cfg.piper_model, "--output-raw",
+             "--length_scale", f"{1.0 / self.cfg.speed:.3f}"],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
         proc.stdin.write(text.encode("utf-8"))
