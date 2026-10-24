@@ -93,7 +93,8 @@ Pi itself: slower, but it keeps talking.
 | Doesn't hear quiet guests | Lower `SB_RMS_FLOOR`, move mic closer |
 | Cuts people off mid-sentence | Raise `SB_VAD_END_FRAMES` (35 ≈ 700ms) |
 | Long pause before replying | Lower `SB_MAX_TOKENS`; check `--brain` timing |
-| Jaw barely moves | Widen `ServoConfig.jaw` range in `config.py` |
+| Jaw barely moves | Widen `SB_JAW_CLOSED_DEG` / `SB_JAW_OPEN_DEG` (run `servo_jog`) |
+| Jaw grinds or buzzes when shut | `SB_JAW_CLOSED_DEG` is past the jaw's stop: raise it 1–2° |
 | Jaw hangs open / chatters | Lower `SB_JAW_ALPHA` toward 0.4 |
 | Greets people across the yard | Raise `SB_MIN_BOX_HEIGHT` toward 0.45 |
 | Hears itself, talks in a loop | Keep `SB_HALF_DUPLEX=true` |

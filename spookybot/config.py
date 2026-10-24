@@ -101,8 +101,14 @@ class ServoConfig:
     i2c_address: int = 0x40
     pwm_freq: int = 50
     # Calibrate these with tools/servo_jog.py BEFORE bolting into the skull.
+    # Jaw closed must sit a degree or two short of where the jaw physically
+    # shuts: past that stop the servo stalls and grinds for as long as it
+    # holds. On this skull the stop is ~82 deg (81 grinds), so closed = 83.
     jaw: ServoLimits = field(default_factory=lambda: ServoLimits(
-        channel=0, min_deg=78.0, max_deg=125.0, rest_deg=78.0))
+        channel=0,
+        min_deg=_envf("SB_JAW_CLOSED_DEG", 83.0),
+        max_deg=_envf("SB_JAW_OPEN_DEG", 125.0),
+        rest_deg=_envf("SB_JAW_CLOSED_DEG", 83.0)))
     pan: ServoLimits = field(default_factory=lambda: ServoLimits(
         channel=1, min_deg=45.0, max_deg=135.0, rest_deg=90.0))
     tilt: ServoLimits = field(default_factory=lambda: ServoLimits(

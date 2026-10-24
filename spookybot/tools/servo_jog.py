@@ -77,6 +77,12 @@ def main() -> int:
     print("\n")
     if len(recorded) >= 2:
         lo, hi = min(recorded), max(recorded)
+        if args.servo == "jaw":
+            print("Put this in .env (closed a degree or two short of where the "
+                  "jaw physically shuts, or it will grind):\n")
+            print(f"    SB_JAW_CLOSED_DEG={lo:g}\n    SB_JAW_OPEN_DEG={hi:g}\n")
+            print("If open and closed come out backwards, swap the two numbers.")
+            return 0
         print(f"Put this in config.py under ServoConfig.{args.servo}:\n")
         rest = lo if args.servo == "jaw" else (lo + hi) / 2
         print(f"    {args.servo}: ServoLimits = field(default_factory=lambda: "

@@ -149,7 +149,7 @@ def test_jaw() -> bool:
         speaker.close()
         servos.set_jaw(0.0)
         time.sleep(0.5)
-        print("[jaw] Done. Tune ServoConfig.jaw min/max and SB_JAW_ALPHA.")
+        print("[jaw] Done. Tune SB_JAW_CLOSED_DEG / SB_JAW_OPEN_DEG and SB_JAW_ALPHA.")
         return True
     except Exception as exc:
         print(f"[jaw] FAILED: {exc}")
