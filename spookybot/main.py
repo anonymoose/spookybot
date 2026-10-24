@@ -146,19 +146,19 @@ class SpookyBot:
                              "instead of greeting it as new.")
 
         if image is not None:
-            lines: list[str] = []
-
-            def remember(sentences):
-                for sentence in sentences:
-                    lines.append(sentence)
-                    yield sentence
-                if lines and self.brain.recent_greetings.maxlen:
-                    self.brain.recent_greetings.append(" ".join(lines))
-
-            self.say(remember(self.brain.respond(
+            self.say(self._remembered(self.brain.respond(
                 "*a guest approaches*", image_jpeg=image, scene_note=note)))
         else:
             self.say(iter([random.choice(GREETINGS)]))
+
+    def _remembered(self, sentences):
+        """Pass sentences through, then file what was said under recent greetings."""
+        lines: list[str] = []
+        for sentence in sentences:
+            lines.append(sentence)
+            yield sentence
+        if lines and self.brain.recent_greetings.maxlen:
+            self.brain.recent_greetings.append(" ".join(lines))
 
     def converse_turn(self, audio=None, image=None, scene_note=None,
                       text=None) -> bool:
@@ -213,7 +213,6 @@ class SpookyBot:
         if audio is None:
             return False
 
-        text = None
         if self.cfg.wake_phrase:
             # Everything said in the room gets transcribed here; only the wake
             # phrase starts a conversation.
@@ -222,12 +221,13 @@ class SpookyBot:
             except Exception as exc:
                 log.error("VOICE STT failed: %s", exc)
                 return False
-            text = strip_wake_phrase(heard or "", self.cfg.wake_phrase)
-            if text is None:
+            rest = strip_wake_phrase(heard or "", self.cfg.wake_phrase)
+            if rest is None:
                 log.info("VOICE ignored (no %r): %s", self.cfg.wake_phrase, heard)
                 return False
-            log.info("VOICE WAKE %r", self.cfg.wake_phrase)
-            text = text or "*a guest says your name to get your attention*"
+            log.info("VOICE WAKE %r (then: %r)", self.cfg.wake_phrase, rest)
+            self.introduce()
+            return True
 
         self.brain.reset()
         image = note = None
@@ -237,8 +237,38 @@ class SpookyBot:
                 note = ("A guest just walked up and spoke to you. This is what "
                         "your camera sees. Answer them, and work in something "
                         "specific about their costume if you can identify it.")
-        self.converse_turn(audio=audio, image=image, scene_note=note, text=text)
+        self.converse_turn(audio=audio, image=image, scene_note=note)
         return True
+
+    def introduce(self) -> None:
+        """Answer the wake phrase with a fresh, short intro, then listen.
+
+        Whatever followed the wake phrase is dropped: the intro asks a question,
+        so the guest's next utterance is the real one.
+        """
+        self.state = "GREET"
+        self.brain.reset()
+        note = ("A guest just said your name to get your attention. Introduce "
+                "yourself in ONE or TWO short sentences, under 14 words in "
+                "total (it must be spoken in under 5 seconds): you are Bones, "
+                "you have been bolted to this wall since 1874, and you offer to "
+                "judge their costume or have a chat. Example: \"I'm Bones, "
+                "bolted to this wall since 1874. Shall I judge your costume?\" "
+                "Word it differently every time.")
+        seen = self.brain.recent_greetings
+        if seen:
+            note += " Do not reuse these earlier intros: " + " | ".join(seen) + "."
+        self.say(self._remembered(
+            self.brain.respond("*a guest says hello to you*", scene_note=note)))
+
+        image = reply_note = None
+        if self.cfg.vision.costume_vision:
+            image = self.vision.capture_jpeg()
+            if image:
+                reply_note = ("This is what your camera sees. The guest is "
+                              "answering your intro; if they want their costume "
+                              "judged, be specific about what you see.")
+        self.converse_turn(image=image, scene_note=reply_note)
 
     # -- main loop ----------------------------------------------------------
 

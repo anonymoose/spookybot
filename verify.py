@@ -507,20 +507,20 @@ def test_voice_arrival():
 
 
 def test_wake_phrase():
-    print("\nwake phrase (\"hey bones\")")
+    print("\nwake phrase (\"hello bones\")")
     from spookybot.wake import strip_wake_phrase as w
-    check("plain match", w("Hey Bones", "hey bones") == "")
-    check("punctuation and trailing words", w("Hey, Bones! Nice head.", "hey bones") == "Nice head.")
-    check("matches mid-sentence", w("okay so hey bones what are you", "hey bones") == "what are you")
-    check("common mishearing", w("Hay bone, who are you?", "hey bones") == "who are you?")
-    check("no phrase -> None", w("what are you supposed to be", "hey bones") is None)
-    check("half a phrase -> None", w("hey there", "hey bones") is None)
-    check("'bones' alone -> None", w("my bones hurt", "hey bones") is None)
+    check("plain match", w("Hello Bones", "hello bones") == "")
+    check("punctuation and trailing words", w("Hello, Bones! Nice head.", "hello bones") == "Nice head.")
+    check("matches mid-sentence", w("okay so hello bones what are you", "hello bones") == "what are you")
+    check("common mishearing", w("Hullo bone, who are you?", "hello bones") == "who are you?")
+    check("no phrase -> None", w("what are you supposed to be", "hello bones") is None)
+    check("half a phrase -> None", w("hello there", "hello bones") is None)
+    check("'bones' alone -> None", w("my bones hurt", "hello bones") is None)
 
     from spookybot.config import CONFIG
     CONFIG.vision.enabled = False
     CONFIG.listen_timeout_s = 1.0
-    CONFIG.wake_phrase = "hey bones"
+    CONFIG.wake_phrase = "hello bones"
     from spookybot.main import SpookyBot
 
     bot = SpookyBot(CONFIG)
@@ -528,9 +528,10 @@ def test_wake_phrase():
         spoken, heard = [], []
         real_say, real_respond = bot.say, bot.brain.respond
         bot.say = lambda s: (spoken.extend(list(s)), real_say(iter([])))[0]
+        prompts = []
         bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
-            heard.append(text), real_respond(text, image_jpeg=image_jpeg,
-                                             scene_note=scene_note))[1]
+            heard.append(text), prompts.append(scene_note or ""), real_respond(text, image_jpeg=image_jpeg,
+                                             scene_note=scene_note))[2]
 
         def speak(phrase):
             bot.stt.transcribe = lambda audio: phrase
@@ -550,17 +551,26 @@ def test_wake_phrase():
               not speak("what are you supposed to be"))
         check("and it stays silent", spoken == [] and heard == [], f"{spoken[:1]}")
 
-        bot.mic.flush()
-        check("phrase starts a conversation", speak("Hey Bones, who are you?"))
-        check("phrase is stripped from what the brain hears",
-              heard == ["who are you?"], f"{heard}")
-        check("guest got a reply", len(spoken) > 0)
+        check("old phrase no longer wakes it",
+              not speak("Hey Bones, who are you?"))
 
-        heard.clear()
         bot.mic.flush()
-        check("bare phrase still starts one", speak("Hey Bones."))
-        check("bare phrase gives the brain something to answer",
-              len(heard) == 1 and "name" in heard[0], f"{heard}")
+        calls = []
+        real_turn = bot.converse_turn
+        bot.converse_turn = lambda **kw: (calls.append(kw), False)[1]
+        check("phrase starts a conversation", speak("Hello Bones, who are you?"))
+        check("first thing said is the intro, not an answer",
+              len(heard) == 1 and "says hello" in heard[0], f"{heard}")
+        check("intro asked for under 14 words and a fresh wording",
+              "under 14 words" in prompts[0] and "differently" in prompts[0])
+        check("intro spoken", len(spoken) > 0)
+        check("then it listens for the guest", len(calls) == 1)
+
+        bot.mic.flush()
+        speak("Hello Bones.")
+        check("second intro is told not to reuse the first",
+              "Do not reuse" in prompts[1], f"{prompts[1][-80:]}")
+        bot.converse_turn = real_turn
     finally:
         bot.shutdown()
 
