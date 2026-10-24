@@ -76,6 +76,7 @@ make status    # service + container state
 make logs      # follow the bot's journal   (make logs-mini for the speech server)
 make logs tag=VOICE   # one stream: VOICE (speech in/out), VISION, CHAT (Claude, tokens, cost), MOTION
 make logs tag="MOTION JAW"   # one servo: MOTION JAW, MOTION PAN, MOTION TILT
+make say text="Happy Halloween"   # speak a line on the bot (voice + jaw); pauses the service
 ```
 
 `deploy/mini/setup.sh` and `deploy/rpi/setup.sh` hold every install step and

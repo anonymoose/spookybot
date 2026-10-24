@@ -6,7 +6,7 @@ RPI  ?= rpi
 RPI_DIR  ?= spookybot
 MINI_DIR ?= spookybot-speech
 
-.PHONY: all mini rpi verify status logs logs-mini restart stop rpi-reboot
+.PHONY: all mini rpi verify status logs logs-mini say restart stop rpi-reboot
 
 all: mini rpi
 
@@ -39,6 +39,17 @@ endif
 
 logs-mini:
 	ssh -t $(MINI) 'cd $(MINI_DIR) && docker compose logs -f'
+
+# make say text="Come closer. I don't bite."   (default: "This is a test.")
+# Briefly stops the service, since it holds the speaker; restarts it only if it
+# was running. The text travels over stdin, so quotes and apostrophes are safe.
+say: export SAY_TEXT = $(text)
+say:
+	printf '%s\n' "$$SAY_TEXT" | ssh $(RPI) 'was=$$(systemctl is-active spookybot); \
+		sudo systemctl stop spookybot; \
+		cd $(RPI_DIR) && set -a && . ./.env && set +a && \
+		.venv/bin/python -m spookybot.tools.say 2>&1 | grep -v "^\["; rc=$${PIPESTATUS[0]}; \
+		[ "$$was" = active ] && sudo systemctl start spookybot; exit $$rc'
 
 restart:
 	ssh $(RPI) 'sudo systemctl restart spookybot'
