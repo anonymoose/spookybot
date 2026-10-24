@@ -137,10 +137,25 @@ class SpookyBot:
                 note = ("A guest just walked up. This is what your camera sees. "
                         "Greet them in one sentence and work in something "
                         "specific about their costume if you can identify it.")
+                seen = self.brain.recent_greetings
+                if seen:
+                    note += (" Lines you used on earlier arrivals tonight: "
+                             + " | ".join(seen) + ". If this costume matches "
+                             "one of those, say you've already seen it tonight "
+                             "instead of greeting it as new.")
 
         if image is not None:
-            self.say(self.brain.respond("*a guest approaches*", image_jpeg=image,
-                                        scene_note=note))
+            lines: list[str] = []
+
+            def remember(sentences):
+                for sentence in sentences:
+                    lines.append(sentence)
+                    yield sentence
+                if lines and self.brain.recent_greetings.maxlen:
+                    self.brain.recent_greetings.append(" ".join(lines))
+
+            self.say(remember(self.brain.respond(
+                "*a guest approaches*", image_jpeg=image, scene_note=note)))
         else:
             self.say(iter([random.choice(GREETINGS)]))
 

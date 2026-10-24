@@ -139,6 +139,8 @@ class BrainConfig:
     history_turns: int = _envi("SB_HISTORY_TURNS", 8)
     # How long a conversation stays "warm" before the head forgets this guest.
     conversation_timeout_s: float = _envf("SB_CONVO_TIMEOUT_S", 45.0)
+    # How many past greetings it remembers, to spot repeat costumes. 0 = off.
+    greeting_memory: int = _envi("SB_GREETING_MEMORY", 5)
     persona_file: str = _env("SB_PERSONA", "persona.md")
 
 

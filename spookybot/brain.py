@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+from collections import deque
 from dataclasses import dataclass, field
 
 from .config import BrainConfig
@@ -89,6 +90,9 @@ class Brain:
         self.client = Anthropic()
         self.persona = self._load_persona()
         self.conversation = Conversation()
+        # What the head said to its last few arrivals, newest last. Survives
+        # reset() so it can notice a costume it has already seen tonight.
+        self.recent_greetings: deque[str] = deque(maxlen=cfg.greeting_memory)
         self.calls = 0
         self.spent = 0.0      # dollars since the bot started
 
