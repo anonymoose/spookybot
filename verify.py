@@ -471,6 +471,7 @@ def test_voice_arrival():
     from spookybot.config import CONFIG
     CONFIG.vision.enabled = False
     CONFIG.listen_timeout_s = 1.0
+    CONFIG.wake_phrase = ""
     from spookybot.main import SpookyBot
 
     bot = SpookyBot(CONFIG)
@@ -501,6 +502,65 @@ def test_voice_arrival():
         check("guest got a reply", len(spoken) > 0, f"{spoken[:1]}")
         check("first reply carries the costume still",
               bool(calls) and calls[0][1] == b"\xff\xd8fake-jpeg")
+    finally:
+        bot.shutdown()
+
+
+def test_wake_phrase():
+    print("\nwake phrase (\"hey bones\")")
+    from spookybot.wake import strip_wake_phrase as w
+    check("plain match", w("Hey Bones", "hey bones") == "")
+    check("punctuation and trailing words", w("Hey, Bones! Nice head.", "hey bones") == "Nice head.")
+    check("matches mid-sentence", w("okay so hey bones what are you", "hey bones") == "what are you")
+    check("common mishearing", w("Hay bone, who are you?", "hey bones") == "who are you?")
+    check("no phrase -> None", w("what are you supposed to be", "hey bones") is None)
+    check("half a phrase -> None", w("hey there", "hey bones") is None)
+    check("'bones' alone -> None", w("my bones hurt", "hey bones") is None)
+
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.listen_timeout_s = 1.0
+    CONFIG.wake_phrase = "hey bones"
+    from spookybot.main import SpookyBot
+
+    bot = SpookyBot(CONFIG)
+    try:
+        spoken, heard = [], []
+        real_say, real_respond = bot.say, bot.brain.respond
+        bot.say = lambda s: (spoken.extend(list(s)), real_say(iter([])))[0]
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            heard.append(text), real_respond(text, image_jpeg=image_jpeg,
+                                             scene_note=scene_note))[1]
+
+        def speak(phrase):
+            bot.stt.transcribe = lambda audio: phrase
+            block = bot.mic.block
+            frames = ([np.zeros(block, dtype=np.int16)] * 3 +
+                      [(np.random.randn(block) * 4000).astype(np.int16)] * 30 +
+                      [np.zeros(block, dtype=np.int16)] * 45)
+            for f in frames:
+                try:
+                    bot.mic._q.put_nowait(f)
+                except Exception:
+                    pass
+            return bot.start_by_voice()
+
+        bot.mic.flush()
+        check("speech without the phrase is ignored",
+              not speak("what are you supposed to be"))
+        check("and it stays silent", spoken == [] and heard == [], f"{spoken[:1]}")
+
+        bot.mic.flush()
+        check("phrase starts a conversation", speak("Hey Bones, who are you?"))
+        check("phrase is stripped from what the brain hears",
+              heard == ["who are you?"], f"{heard}")
+        check("guest got a reply", len(spoken) > 0)
+
+        heard.clear()
+        bot.mic.flush()
+        check("bare phrase still starts one", speak("Hey Bones."))
+        check("bare phrase gives the brain something to answer",
+              len(heard) == 1 and "name" in heard[0], f"{heard}")
     finally:
         bot.shutdown()
 
@@ -541,7 +601,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

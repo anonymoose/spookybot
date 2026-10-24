@@ -32,6 +32,7 @@ from .stt import Transcriber
 from .tts import Speech
 from .vad import UtteranceDetector
 from .vision import Vision
+from .wake import strip_wake_phrase
 
 log = logging.getLogger("spookybot")
 
@@ -159,11 +160,13 @@ class SpookyBot:
         else:
             self.say(iter([random.choice(GREETINGS)]))
 
-    def converse_turn(self, audio=None, image=None, scene_note=None) -> bool:
+    def converse_turn(self, audio=None, image=None, scene_note=None,
+                      text=None) -> bool:
         """One listen/think/speak cycle. Returns False when the guest is done.
 
         Pass `audio` to answer an utterance that was already captured, and
-        `image`/`scene_note` to show the model the costume with this turn.
+        `image`/`scene_note` to show the model the costume with this turn. Pass
+        `text` as well to skip transcribing that audio.
         """
         self.state = "LISTEN"
         self._track_guest()
@@ -178,12 +181,13 @@ class SpookyBot:
                 return False
 
         self.state = "THINK"
-        try:
-            text = self.stt.transcribe(audio)
-        except Exception as exc:
-            log.error("VOICE STT failed: %s", exc)
-            self.say(iter([random.choice(CONFUSED)]))
-            return True
+        if text is None:
+            try:
+                text = self.stt.transcribe(audio)
+            except Exception as exc:
+                log.error("VOICE STT failed: %s", exc)
+                self.say(iter([random.choice(CONFUSED)]))
+                return True
 
         if not text or len(text) < 2:
             self.say(iter([random.choice(CONFUSED)]))
@@ -209,6 +213,22 @@ class SpookyBot:
         if audio is None:
             return False
 
+        text = None
+        if self.cfg.wake_phrase:
+            # Everything said in the room gets transcribed here; only the wake
+            # phrase starts a conversation.
+            try:
+                heard = self.stt.transcribe(audio)
+            except Exception as exc:
+                log.error("VOICE STT failed: %s", exc)
+                return False
+            text = strip_wake_phrase(heard or "", self.cfg.wake_phrase)
+            if text is None:
+                log.info("VOICE ignored (no %r): %s", self.cfg.wake_phrase, heard)
+                return False
+            log.info("VOICE WAKE %r", self.cfg.wake_phrase)
+            text = text or "*a guest says your name to get your attention*"
+
         self.brain.reset()
         image = note = None
         if self.cfg.vision.costume_vision:
@@ -217,14 +237,19 @@ class SpookyBot:
                 note = ("A guest just walked up and spoke to you. This is what "
                         "your camera sees. Answer them, and work in something "
                         "specific about their costume if you can identify it.")
-        self.converse_turn(audio=audio, image=image, scene_note=note)
+        self.converse_turn(audio=audio, image=image, scene_note=note, text=text)
         return True
 
     # -- main loop ----------------------------------------------------------
 
     def run(self) -> None:
-        detecting = self.vision.detecting
-        if not detecting:
+        # With a wake phrase the camera still tracks guests, but only speech
+        # starts a conversation.
+        detecting = self.vision.detecting and not self.cfg.wake_phrase
+        if self.cfg.wake_phrase:
+            log.info("VOICE wake-phrase mode: say %r to start a conversation",
+                     self.cfg.wake_phrase)
+        elif not detecting:
             log.info("VISION no presence detection — voice-activated mode: guests "
                      "start a conversation by speaking")
         while self.running:
