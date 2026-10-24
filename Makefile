@@ -20,8 +20,10 @@ rpi: verify
 		./ $(RPI):$(RPI_DIR)/
 	ssh $(RPI) 'bash $(RPI_DIR)/deploy/rpi/setup.sh'
 
+# Uses the local uv venv (uv venv .venv && uv pip install -r requirements.txt,
+# minus the Pi-only adafruit-* servo libs) when there is one.
 verify:
-	python3 verify.py
+	$(if $(wildcard .venv/bin/python),.venv/bin/python,python3) verify.py
 
 status:
 	ssh $(RPI) 'systemctl --no-pager status spookybot | head -n 12'
