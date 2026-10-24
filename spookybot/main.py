@@ -249,12 +249,15 @@ class SpookyBot:
         self.state = "GREET"
         self.brain.reset()
         note = ("A guest just said your name to get your attention. Introduce "
-                "yourself in ONE or TWO short sentences, under 14 words in "
-                "total (it must be spoken in under 5 seconds): you are Bones, "
-                "you have been bolted to this wall since 1874, and you offer to "
-                "judge their costume or have a chat. Example: \"I'm Bones, "
-                "bolted to this wall since 1874. Shall I judge your costume?\" "
-                "Word it differently every time.")
+                "yourself in THREE short sentences, about 30 words in total "
+                "(roughly 10 seconds spoken): you are Bones, you have been "
+                "bolted to this wall since 1874, and you have opinions about "
+                "everyone who walks past. Then offer to judge their costume or "
+                "have a chat. Example: \"My name is Bones, and I have been "
+                "bolted to this wall since 1874. I have seen every costume "
+                "this house has to offer, and most of them were disappointing. "
+                "Would you like me to judge yours?\" Word it differently "
+                "every time.")
         seen = self.brain.recent_greetings
         if seen:
             note += " Do not reuse these earlier intros: " + " | ".join(seen) + "."

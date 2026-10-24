@@ -561,8 +561,8 @@ def test_wake_phrase():
         check("phrase starts a conversation", speak("Hello Bones, who are you?"))
         check("first thing said is the intro, not an answer",
               len(heard) == 1 and "says hello" in heard[0], f"{heard}")
-        check("intro asked for under 14 words and a fresh wording",
-              "under 14 words" in prompts[0] and "differently" in prompts[0])
+        check("intro asked for ~30 words and a fresh wording",
+              "30 words" in prompts[0] and "differently" in prompts[0])
         check("intro spoken", len(spoken) > 0)
         check("then it listens for the guest", len(calls) == 1)
 
