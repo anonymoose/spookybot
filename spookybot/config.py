@@ -187,7 +187,7 @@ class Config:
     tts: TTSConfig = field(default_factory=TTSConfig)
 
     # Seconds of silence from a guest before the head gives up and idles.
-    listen_timeout_s: float = _envf("SB_LISTEN_TIMEOUT_S", 10.0)
+    listen_timeout_s: float = _envf("SB_LISTEN_TIMEOUT_S", 45.0)
     # Don't re-greet the same person over and over.
     greet_cooldown_s: float = _envf("SB_GREET_COOLDOWN_S", 30.0)
     # Stay quiet until someone says this (matched on the STT transcript), instead
