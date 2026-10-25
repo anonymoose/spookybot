@@ -194,6 +194,12 @@ class SpookyBot:
             return True
 
         log.info("VOICE HEARD: %s", text)
+        # A fresh still with every turn, so "what do you think of my costume?"
+        # works at any point in the chat, not just the first reply. The brain
+        # keeps only the newest image in context, so this costs one image per
+        # call and no more.
+        if image is None and self.cfg.vision.costume_vision:
+            image = self.vision.capture_jpeg()
         self.say(self.brain.respond(text, image_jpeg=image, scene_note=scene_note))
         return True
 
@@ -264,14 +270,9 @@ class SpookyBot:
         self.say(self._remembered(
             self.brain.respond("*a guest says hello to you*", scene_note=note)))
 
-        image = reply_note = None
-        if self.cfg.vision.costume_vision:
-            image = self.vision.capture_jpeg()
-            if image:
-                reply_note = ("This is what your camera sees. The guest is "
-                              "answering your intro; if they want their costume "
-                              "judged, be specific about what you see.")
-        self.converse_turn(image=image, scene_note=reply_note)
+        self.converse_turn(scene_note=(
+            "The guest is answering your intro; if they want their costume "
+            "judged, be specific about what you see."))
 
     # -- main loop ----------------------------------------------------------
 

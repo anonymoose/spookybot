@@ -575,6 +575,35 @@ def test_wake_phrase():
         bot.shutdown()
 
 
+def test_still_every_turn():
+    print("\nfresh camera still on every turn")
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.listen_timeout_s = 1.0
+    CONFIG.wake_phrase = ""
+    from spookybot.main import SpookyBot
+
+    bot = SpookyBot(CONFIG)
+    try:
+        images = []
+        real_respond = bot.brain.respond
+        bot.say = lambda s: list(s)
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            images.append(image_jpeg),
+            real_respond(text, image_jpeg=image_jpeg, scene_note=scene_note))[1]
+        stills = iter([b"\xff\xd8one", b"\xff\xd8two"])
+        bot.vision.capture_jpeg = lambda: next(stills)
+        audio = np.zeros(1600, dtype=np.int16)
+        bot.converse_turn(audio=audio)
+        bot.converse_turn(audio=audio)
+        check("every turn gets a still, not just the first",
+              images == [b"\xff\xd8one", b"\xff\xd8two"], f"{images}")
+        bot.converse_turn(audio=audio, image=b"\xff\xd8given")
+        check("a still passed in is used as is", images[-1] == b"\xff\xd8given")
+    finally:
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -611,7 +640,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()
