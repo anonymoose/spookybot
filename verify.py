@@ -604,6 +604,34 @@ def test_still_every_turn():
         bot.shutdown()
 
 
+def test_startup_announcement():
+    print("\nstartup announcement")
+    from datetime import datetime
+    from spookybot.main import spoken_time
+    check("afternoon", spoken_time(datetime(2026, 10, 27, 19, 28)) == "7:28 PM")
+    check("morning, minutes padded", spoken_time(datetime(2026, 10, 27, 8, 5)) == "8:05 AM")
+    check("midnight is 12 AM", spoken_time(datetime(2026, 10, 27, 0, 0)) == "12:00 AM")
+    check("noon is 12 PM", spoken_time(datetime(2026, 10, 27, 12, 30)) == "12:30 PM")
+
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    from spookybot.main import SpookyBot
+    bot = SpookyBot(CONFIG)
+    try:
+        spoken = []
+        bot.say = lambda s: spoken.extend(list(s))
+        bot.announce_ready()
+        line = spoken[0] if spoken else ""
+        check("announces name and time",
+              line.startswith("Hello, my name is Bones. It is ")
+              and line.endswith(" Eastern time."), f"{line!r}")
+        bot.say = lambda s: (_ for _ in ()).throw(RuntimeError("speaker gone"))
+        bot.announce_ready()
+        check("a failed announcement doesn't stop startup", True)
+    finally:
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -640,7 +668,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

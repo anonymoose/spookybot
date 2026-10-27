@@ -190,6 +190,8 @@ class Config:
     listen_timeout_s: float = _envf("SB_LISTEN_TIMEOUT_S", 45.0)
     # Don't re-greet the same person over and over.
     greet_cooldown_s: float = _envf("SB_GREET_COOLDOWN_S", 30.0)
+    # Say "hello, my name is Bones" and the time whenever the bot starts up.
+    announce_startup: bool = _envb("SB_ANNOUNCE_STARTUP", True)
     # Stay quiet until someone says this (matched on the STT transcript), instead
     # of greeting whoever the camera sees. Empty = greet on sight.
     wake_phrase: str = _env("SB_WAKE_PHRASE", "hello bones")

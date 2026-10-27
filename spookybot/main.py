@@ -23,6 +23,8 @@ import signal
 import sys
 import threading
 import time
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from .audio_io import MicStream, Speaker
 from .brain import Brain
@@ -49,6 +51,12 @@ CONFUSED = [
     "Say again? It's loud in here, even for the dead.",
     "What was that?",
 ]
+
+
+def spoken_time(now: datetime | None = None) -> str:
+    """Eastern wall-clock time as a line for the speech synthesizer."""
+    now = now or datetime.now(ZoneInfo("America/New_York"))
+    return f"{now.hour % 12 or 12}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'}"
 
 
 class SpookyBot:
@@ -276,7 +284,18 @@ class SpookyBot:
 
     # -- main loop ----------------------------------------------------------
 
+    def announce_ready(self) -> None:
+        """Say hello and the time once everything is up, so whoever restarted the
+        bot knows it is alive and the speaker and clock are right."""
+        try:
+            self.say(iter([f"Hello, my name is Bones. It is {spoken_time()} "
+                           "Eastern time."]))
+        except Exception as exc:
+            log.warning("VOICE startup announcement failed: %s", exc)
+
     def run(self) -> None:
+        if self.cfg.announce_startup:
+            self.announce_ready()
         # With a wake phrase the camera still tracks guests, but only speech
         # starts a conversation.
         detecting = self.vision.detecting and not self.cfg.wake_phrase
