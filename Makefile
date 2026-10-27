@@ -53,6 +53,17 @@ say:
 		.venv/bin/python -m spookybot.tools.say 2>&1 | grep -v "^\["; rc=$${PIPESTATUS[0]}; \
 		[ "$$was" = active ] && sudo systemctl start spookybot; exit $$rc'
 
+# make tone   stop the service and play a 4s 440 Hz tone on the bot's speaker, to
+# check volume and wiring without the app involved. Leaves the service stopped
+# (make restart brings it back).
+tone:
+	ssh $(RPI) 'sudo systemctl stop spookybot; \
+		cd $(RPI_DIR) && set -a && . ./.env && set +a && \
+		card=$$(aplay -l | grep -F "$$SB_OUTPUT_DEVICE" | head -n1 | sed "s/^card \([0-9]*\):.*/\1/"); \
+		[ -n "$$card" ] || { echo "no sound card matching $$SB_OUTPUT_DEVICE"; exit 1; }; \
+		echo "tone on card $$card ($$SB_OUTPUT_DEVICE), $$(amixer -c $$card sget PCM | grep -m1 -o "\[[0-9]*%\]")"; \
+		timeout 4 speaker-test -D plughw:$$card,0 -t sine -f 440 -c 2 >/dev/null 2>&1; true'
+
 restart:
 	ssh $(RPI) 'sudo systemctl restart spookybot'
 
