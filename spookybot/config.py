@@ -215,6 +215,11 @@ class Config:
     # Stay quiet until someone says this (matched on the STT transcript), instead
     # of greeting whoever the camera sees. Empty = greet on sight.
     wake_phrase: str = _env("SB_WAKE_PHRASE", "hello bones")
+    # Replies written and spoken ahead of time, so they play with no wait: this
+    # many intros for "hello bones", and this many jokes for any request that
+    # mentions a joke. The queues refill in the background while he is idle. 0 = off.
+    preload_intros: int = _envi("SB_PRELOAD_INTROS", 5)
+    preload_jokes: int = _envi("SB_PRELOAD_JOKES", 5)
     log_level: str = _env("SB_LOG_LEVEL", "INFO")
 
 

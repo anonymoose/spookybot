@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
 import time
 from typing import Iterator
 
@@ -37,8 +38,44 @@ class Speech:
                 raise FileNotFoundError(f"Piper model not found: {cfg.piper_model}")
         else:
             raise ValueError(f"unknown TTS backend: {cfg.backend}")
+        # Sentences synthesized ahead of time (see preload.py): text -> PCM chunks.
+        # stream() plays one from here, once, instead of calling the backend.
+        self._cache: dict[str, list[bytes]] = {}
+        self._cache_lock = threading.Lock()
+
+    def warm(self, text: str) -> bool:
+        """Synthesize `text` now so a later stream(text) plays with no wait.
+
+        Only the configured voice is cached: if the primary backend fails this
+        returns False rather than caching the local fallback voice.
+        """
+        try:
+            chunks = list(self._primary(text))
+        except Exception as exc:
+            log.warning("PRELOAD speech failed (%s): %r", exc, text[:60])
+            return False
+        if not chunks:
+            return False
+        with self._cache_lock:
+            self._cache[text] = chunks
+        return True
+
+    def discard(self, text: str) -> None:
+        with self._cache_lock:
+            self._cache.pop(text, None)
+
+    def is_cached(self, text: str) -> bool:
+        with self._cache_lock:
+            return text in self._cache
 
     def stream(self, text: str) -> Iterator[bytes]:
+        with self._cache_lock:
+            cached = self._cache.pop(text, None)
+        if cached is not None:
+            log.info("VOICE TTS cached (%d ms of audio, no wait): %r",
+                     sum(len(c) for c in cached) * 500 // self.sample_rate, text)
+            yield from cached
+            return
         log.info("VOICE TTS -> %s: %r", self._describe(), text)
         t0 = time.monotonic()
         first_ms = None
@@ -61,14 +98,17 @@ class Speech:
                     f"speed={self.cfg.speed:g}")
         return "piper"
 
+    def _primary(self, text: str) -> Iterator[bytes]:
+        if self.cfg.backend == "elevenlabs":
+            yield from self._elevenlabs(text)
+        elif self.cfg.backend == "openai":
+            yield from self._openai(text)
+        else:
+            yield from self._piper(text)
+
     def _stream(self, text: str) -> Iterator[bytes]:
         try:
-            if self.cfg.backend == "elevenlabs":
-                yield from self._elevenlabs(text)
-            elif self.cfg.backend == "openai":
-                yield from self._openai(text)
-            else:
-                yield from self._piper(text)
+            yield from self._primary(text)
         except Exception as exc:
             log.error("VOICE TTS failed (%s); trying local Piper", exc)
             try:

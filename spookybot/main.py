@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import logging
 import random
+import re
 import signal
 import sys
 import threading
@@ -29,6 +30,7 @@ from zoneinfo import ZoneInfo
 from .audio_io import MicStream, Speaker
 from .brain import Brain
 from .config import CONFIG, Config
+from .preload import Preloader
 from .servos import ServoBus
 from .stt import Transcriber
 from .tts import Speech
@@ -51,6 +53,46 @@ CONFUSED = [
     "Say again? It's loud in here, even for the dead.",
     "What was that?",
 ]
+
+
+# Any request that mentions a joke gets a prepared one ("joke about cats" too).
+JOKE_RE = re.compile(r"\bjokes?\b", re.IGNORECASE)
+
+INTRO_USER = "*a guest says hello to you*"
+INTRO_NOTE = ("A guest just said your name to get your attention. Introduce "
+              "yourself in THREE short sentences, about 30 words in total "
+              "(roughly 10 seconds spoken): you are Bones, you have been "
+              "bolted to this wall since 1874, and you have opinions about "
+              "everyone who walks past. Then offer to judge their costume or "
+              "have a chat. Example: \"My name is Bones, and I have been "
+              "bolted to this wall since 1874. I have seen every costume "
+              "this house has to offer, and most of them were disappointing. "
+              "Would you like me to judge yours?\" Word it differently "
+              "every time.")
+JOKE_USER = "Tell me a joke."
+JOKE_NOTE = ("A guest asked for a joke. Tell ONE short, clean, PG-13 joke in "
+             "your voice: exactly two sentences, a setup and a punchline, under "
+             "30 words in total. It is spoken aloud, so no stage directions. "
+             "Make it a different joke every time.")
+# Without a nudge every restart opens with the same skeleton-at-a-party joke.
+JOKE_THEMES = ("skeletons and bones", "pumpkins", "ghosts", "vampires", "witches",
+               "mummies", "zombies", "candy and trick-or-treating", "costumes",
+               "black cats", "spiders", "haunted houses", "Florida in October",
+               "cemeteries", "werewolves", "being a head on a wall")
+
+
+def intro_request(avoid: list) -> tuple:
+    note = INTRO_NOTE
+    if avoid:
+        note += " Do not reuse these earlier intros: " + " | ".join(avoid) + "."
+    return INTRO_USER, note
+
+
+def joke_request(avoid: list) -> tuple:
+    note = f"{JOKE_NOTE} Theme this time: {random.choice(JOKE_THEMES)}."
+    if avoid:
+        note += " Do not reuse these jokes: " + " | ".join(avoid) + "."
+    return JOKE_USER, note
 
 
 def spoken_time(now: datetime | None = None) -> str:
@@ -88,6 +130,13 @@ class SpookyBot:
         self.brain.on_wait = self._on_brain_wait
         self.stt = Transcriber(cfg.stt, cfg.audio.sample_rate)
         self.tts = Speech(cfg.tts, cfg.audio.playback_rate)
+        self.preloader = None
+        if cfg.preload_intros > 0 or cfg.preload_jokes > 0:
+            self.preloader = Preloader(
+                self.brain, self.tts,
+                {"intro": cfg.preload_intros, "joke": cfg.preload_jokes},
+                {"intro": intro_request, "joke": joke_request},
+                idle=lambda: self.state in ("IDLE", "LISTEN"))
 
         self._idle_thread = threading.Thread(target=self._idle_motion, daemon=True)
         self._idle_thread.start()
@@ -220,6 +269,13 @@ class SpookyBot:
             log.info("VOICE QUIET %r: ending the conversation", self.cfg.quiet_phrase)
             self.say(iter(["As you wish."]))
             return False
+        if self.preloader is not None and JOKE_RE.search(text):
+            prepared = self.preloader.take("joke")
+            if prepared:
+                log.info("VOICE joke from the preloaded queue")
+                self.say(iter(prepared))
+                self.brain.inject_turn(text, " ".join(prepared))
+                return True
         # A fresh still with every turn, so "what do you think of my costume?"
         # works at any point in the chat, not just the first reply. The brain
         # keeps only the newest image in context, so this costs one image per
@@ -280,21 +336,18 @@ class SpookyBot:
         """
         self.state = "GREET"
         self.brain.reset()
-        note = ("A guest just said your name to get your attention. Introduce "
-                "yourself in THREE short sentences, about 30 words in total "
-                "(roughly 10 seconds spoken): you are Bones, you have been "
-                "bolted to this wall since 1874, and you have opinions about "
-                "everyone who walks past. Then offer to judge their costume or "
-                "have a chat. Example: \"My name is Bones, and I have been "
-                "bolted to this wall since 1874. I have seen every costume "
-                "this house has to offer, and most of them were disappointing. "
-                "Would you like me to judge yours?\" Word it differently "
-                "every time.")
-        seen = self.brain.recent_greetings
-        if seen:
-            note += " Do not reuse these earlier intros: " + " | ".join(seen) + "."
-        self.say(self._remembered(
-            self.brain.respond("*a guest says hello to you*", scene_note=note)))
+        prepared = self.preloader.take("intro") if self.preloader else None
+        if prepared:
+            log.info("VOICE intro from the preloaded queue")
+            self.say(iter(prepared))
+            said = " ".join(prepared)
+            self.brain.inject_turn(INTRO_USER, said)
+            if self.brain.recent_greetings.maxlen:
+                self.brain.recent_greetings.append(said)
+        else:
+            user_text, note = intro_request(list(self.brain.recent_greetings))
+            self.say(self._remembered(
+                self.brain.respond(user_text, scene_note=note)))
 
         self.converse_turn(scene_note=(
             "The guest is answering your intro; if they want their costume "
@@ -325,18 +378,43 @@ class SpookyBot:
         elif self._voice_started:
             self.servos.set_eye_mode("steady")
 
+    def _speak_line(self, text: str) -> None:
+        try:
+            self.say(iter([text]))
+        except Exception as exc:
+            log.warning("VOICE startup line failed (%r): %s", text, exc)
+
     def announce_ready(self) -> None:
         """Say hello and the time once everything is up, so whoever restarted the
         bot knows it is alive and the speaker and clock are right."""
-        try:
-            self.say(iter([f"Hello, my name is Bones. It is {spoken_time()} "
-                           "Eastern time."]))
-        except Exception as exc:
-            log.warning("VOICE startup announcement failed: %s", exc)
+        self._speak_line(f"Hello, my name is Bones. It is {spoken_time()} "
+                         "Eastern time.")
 
-    def run(self) -> None:
+    def startup_sequence(self) -> None:
+        """Announce, stock the preload queues, announce again when it is ready.
+
+        With announcements on, the stocking runs here, on the main thread, so
+        nothing can talk over the announcements and the head is not listening
+        until it says it is ready. With them off (a quick dev restart) the
+        queues fill in the background and it listens straight away.
+        """
         if self.cfg.announce_startup:
             self.announce_ready()
+            if self.preloader is not None:
+                self._speak_line("Preloading interactions.")
+                self.servos.set_eye_mode("flicker")   # waiting on Claude
+                t0 = time.monotonic()
+                full = self.preloader.fill_initial()
+                log.info("PRELOAD done in %.0f s (%s)", time.monotonic() - t0,
+                         "queues full" if full else "incomplete, will keep "
+                         "trying; replies not ready are written live")
+                self.servos.set_eye_mode("pulse")
+            self._speak_line("Bones is ready.")
+        if self.preloader is not None:
+            self.preloader.start()
+
+    def run(self) -> None:
+        self.startup_sequence()
         # With a wake phrase the camera still tracks guests, but only speech
         # starts a conversation.
         detecting = self.vision.detecting and not self.cfg.wake_phrase
@@ -387,6 +465,8 @@ class SpookyBot:
 
         log.info("Shutting down…")
         self.running = False
+        if self.preloader is not None:
+            self.preloader.stop()
         for step in (self.speaker.stop, self.mic.close, self.vision.close,
                      self.servos.close):
             try:

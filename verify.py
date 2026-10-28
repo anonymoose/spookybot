@@ -121,6 +121,17 @@ class _Messages:
             return _Stream(script, stop)
         return _Stream(["Well ", "well. ", "A pirate, ", "is it? ",
                         "Bold ", "choice."])
+def _create(self, **kw):
+    _Messages.create_calls.append(kw)
+    text = (_Messages.create_queued.pop(0) if _Messages.create_queued
+            else f"Pun number {len(_Messages.create_calls)}. Punchline {len(_Messages.create_calls)}.")
+    usage = types.SimpleNamespace(input_tokens=500, output_tokens=30,
+                                  cache_creation_input_tokens=0,
+                                  cache_read_input_tokens=0)
+    return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text=text)],
+                                 usage=usage, stop_reason="end_turn")
+_Messages.create_calls, _Messages.create_queued = [], []
+_Messages.create = _create
 class _Anthropic:
     def __init__(self, *a, **kw): self.messages = _Messages()
 anth.Anthropic = _Anthropic
@@ -908,6 +919,249 @@ def test_web_search():
         bot.shutdown()
 
 
+def test_preload():
+    print("\npreloaded replies (hello bones intros and jokes)")
+    from spookybot.config import CONFIG, BrainConfig
+    from spookybot.brain import Brain, split_sentences
+    from spookybot.preload import Preloader
+    from spookybot.tts import Speech
+    import spookybot.main as main_mod
+    M = sys.modules["anthropic"].Anthropic().messages.__class__
+
+    check("splits a reply into sentences",
+          split_sentences("Why? Because. Ha!") == ["Why?", "Because.", "Ha!"])
+    check("joke trigger: the word joke, any case, plural",
+          all(main_mod.JOKE_RE.search(t) for t in
+              ["tell me a joke", "Got any JOKES?", "a joke about cats please"]))
+    notes = {main_mod.joke_request([])[1] for _ in range(40)}
+    check("each joke is given a theme, and they vary", len(notes) > 3, f"{len(notes)} variants")
+    check("jokes are told what to avoid",
+          "Do not reuse these jokes: Old joke." in main_mod.joke_request(["Old joke."])[1])
+    check("joke trigger ignores other words",
+          not any(main_mod.JOKE_RE.search(t) for t in
+                  ["what is your name", "jokester", "who are you"]))
+
+    # -- speech cache -------------------------------------------------------
+    tts = Speech(CONFIG.tts, CONFIG.audio.playback_rate)
+    backend_calls = []
+    real_primary = tts._primary
+    tts._primary = lambda text: (backend_calls.append(text), real_primary(text))[1]
+    check("warm synthesizes and stores", tts.warm("Boo.") and tts.is_cached("Boo."))
+    n = len(backend_calls)
+    audio = b"".join(tts.stream("Boo."))
+    check("a cached sentence plays without calling the speech backend",
+          len(audio) > 1000 and len(backend_calls) == n)
+    check("and is used once", not tts.is_cached("Boo."))
+    b"".join(tts.stream("Boo."))
+    check("then it is synthesized live again", len(backend_calls) == n + 1)
+
+    def boom(text):
+        raise RuntimeError("speech server down")
+        yield b""
+    tts._primary = boom
+    check("a failed warm reports False and caches nothing (no fallback voice)",
+          not tts.warm("Fail.") and not tts.is_cached("Fail."))
+    tts._primary = real_primary
+
+    # -- brain.generate / inject_turn ----------------------------------------
+    brain = Brain(BrainConfig())
+    M.create_calls.clear()
+    text = brain.generate("Tell me a joke.", "be punny")
+    call = M.create_calls[-1]
+    check("generate returns the text", text and text.startswith("Pun number"))
+    check("generate sends the note, the persona, and no tools",
+          call["messages"][0]["content"].startswith("[be punny]")
+          and call["system"] == brain.persona and "tools" not in call)
+    check("generate leaves the conversation alone", brain.conversation.messages == [])
+    brain.inject_turn("tell me a joke", "Why? Because.")
+    check("inject_turn records both sides",
+          [m["role"] for m in brain.conversation.messages] == ["user", "assistant"])
+
+    # -- the preloader ------------------------------------------------------
+    brain = Brain(BrainConfig())
+    tts = Speech(CONFIG.tts, CONFIG.audio.playback_rate)
+    seen_avoid = []
+    prompts = {"joke": lambda avoid: (seen_avoid.append(list(avoid)), ("Tell me a joke.", "joke"))[1],
+               "intro": lambda avoid: ("hello", "intro")}
+    pre = Preloader(brain, tts, {"intro": 2, "joke": 3}, prompts, backoff_s=0.05)
+    M.create_calls.clear()
+    made = pre.fill_once()
+    check("fills every queue to its target", pre.counts() == {"intro": 2, "joke": 3}
+          and made == 5, f"{pre.counts()} made={made}")
+    first = pre.take("joke")
+    check("take returns the sentences, and the speech is already cached",
+          first and all(tts.is_cached(x) for x in first), f"{first}")
+    check("taking one leaves the others", pre.counts()["joke"] == 2)
+    pre.fill_once()
+    check("refill tops back up to the target", pre.counts()["joke"] == 3)
+    check("later jokes are told what to avoid (queued and already used)",
+          any(" ".join(first) in a for a in seen_avoid[-1:]) and len(seen_avoid[-1]) >= 3,
+          f"{seen_avoid[-1]}")
+    check("empty or unknown queue gives None", pre.take("nope") is None)
+
+    busy = {"v": False}
+    pre2 = Preloader(Brain(BrainConfig()), tts, {"joke": 2}, prompts,
+                     idle=lambda: not busy["v"], backoff_s=0.05)
+    busy["v"] = True
+    check("does nothing while the bot is busy", pre2.fill_once() == 0 and pre2.counts() == {"joke": 0})
+    busy["v"] = False
+
+    flaky = Brain(BrainConfig())
+    flaky.generate = lambda *a, **k: None
+    pre3 = Preloader(flaky, tts, {"joke": 2}, prompts, backoff_s=0.05)
+    check("a failed text call stops the pass without raising",
+          pre3.fill_once() == 0 and pre3.counts() == {"joke": 0})
+    pre4 = Preloader(Brain(BrainConfig()), tts, {"joke": 1}, prompts, backoff_s=0.05)
+    tts._primary = boom
+    check("a failed speech call drops the reply instead of queueing silence",
+          pre4.fill_once() == 0 and pre4.counts() == {"joke": 0})
+    tts._primary = real_primary
+
+    # background thread
+    pre5 = Preloader(Brain(BrainConfig()), tts, {"joke": 2}, prompts, backoff_s=0.05)
+    pre5.start()
+    for _ in range(100):
+        if pre5.counts()["joke"] == 2:
+            break
+        time.sleep(0.05)
+    check("the background thread stocks the queue", pre5.counts()["joke"] == 2)
+    pre5.take("joke")
+    for _ in range(100):
+        if pre5.counts()["joke"] == 2:
+            break
+        time.sleep(0.05)
+    check("and refills after a reply is used", pre5.counts()["joke"] == 2)
+    pre5.stop()
+
+
+def test_preload_in_the_bot():
+    print("\npreloaded replies used by the bot")
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.wake_phrase = "hello bones"
+    CONFIG.quiet_phrase = "quiet bones"
+    from spookybot.main import SpookyBot
+
+    bot = SpookyBot(CONFIG)
+    try:
+        check("a preloader exists by default", bot.preloader is not None)
+        spoken, live = [], []
+        real_respond = bot.brain.respond
+        bot.say = lambda s: spoken.extend(list(s))
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            live.append(text), real_respond(text, image_jpeg=image_jpeg,
+                                            scene_note=scene_note))[1]
+        bot.vision.capture_jpeg = lambda: b"\xff\xd8still"
+        bot.converse_turn = lambda **kw: False        # skip the listen after the intro
+        audio = np.zeros(1600, dtype=np.int16)
+
+        # intro: queue empty -> live path, exactly as before
+        bot.introduce()
+        check("empty queue -> the intro is written live", len(live) == 1 and spoken)
+
+        # intro: from the queue
+        bot.preloader._queues["intro"].append(["Prepared intro one.", "Prepared intro two."])
+        live.clear(); spoken.clear()
+        bot.introduce()
+        check("queued intro is spoken with no call to Claude",
+              spoken == ["Prepared intro one.", "Prepared intro two."] and live == [], f"{spoken}")
+        roles = [m["role"] for m in bot.brain.conversation.messages]
+        check("and goes into the history so Claude knows what it said",
+              roles == ["user", "assistant"]
+              and "Prepared intro one." in bot.brain.conversation.messages[-1]["content"])
+        check("and into the do-not-repeat memory",
+              any("Prepared intro one." in g for g in bot.brain.recent_greetings))
+
+        # jokes
+        real_turn = SpookyBot.converse_turn.__get__(bot)
+        bot.converse_turn = real_turn
+        bot.brain.reset()
+        bot.preloader._queues["joke"].append(["Why no skeleton fights?", "No guts."])
+        bot.stt.transcribe = lambda a: "Tell me a joke about cats"
+        live.clear(); spoken.clear()
+        check("a joke request keeps the conversation going",
+              bot.converse_turn(audio=audio) is True)
+        check("it plays the prepared joke, no Claude call, no camera still",
+              spoken == ["Why no skeleton fights?", "No guts."] and live == [], f"{spoken} {live}")
+        check("the request and joke are in the history",
+              bot.brain.conversation.messages[-2]["content"][0]["text"] == "Tell me a joke about cats"
+              and "No guts." in bot.brain.conversation.messages[-1]["content"])
+
+        live.clear(); spoken.clear()
+        check("queue empty -> a joke request is answered live",
+              bot.converse_turn(audio=audio) is True and len(live) == 1)
+
+        bot.preloader._queues["joke"].append(["Unused joke."])
+        bot.stt.transcribe = lambda a: "what is your name"
+        live.clear(); spoken.clear()
+        bot.converse_turn(audio=audio)
+        check("other requests never touch the joke queue",
+              len(live) == 1 and bot.preloader.counts()["joke"] == 1)
+
+        CONFIG.preload_intros = CONFIG.preload_jokes = 0
+        off = SpookyBot(CONFIG)
+        check("both counts 0 -> no preloader at all", off.preloader is None)
+        off.shutdown()
+    finally:
+        CONFIG.preload_intros, CONFIG.preload_jokes = 5, 5
+        bot.shutdown()
+
+
+def test_startup_sequence():
+    print("\nstartup announcements around the preload")
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.announce_startup = True
+    CONFIG.preload_intros, CONFIG.preload_jokes = 2, 2
+    from spookybot.main import SpookyBot
+
+    def run(prep=None):
+        bot = SpookyBot(CONFIG)
+        events = []
+        bot.say = lambda s: events.append(("say", " ".join(list(s))))
+        real_fill = bot.preloader.fill_initial
+        bot.preloader.fill_initial = lambda *a, **k: (events.append(("fill", None)),
+                                                      (prep or real_fill)(*a, **k))[1]
+        bot.preloader.start = lambda: events.append(("start", None))
+        return bot, events
+
+    bot, events = run()
+    try:
+        bot.startup_sequence()
+        kinds = [e[0] if e[0] != "say" else e[1][:14] for e in events]
+        check("order: hello, preloading, fill, ready, then the background refiller",
+              kinds == ["Hello, my name", "Preloading int", "fill", "Bones is ready", "start"],
+              f"{kinds}")
+        check("the lines are exactly as asked",
+              [e[1] for e in events if e[0] == "say"][1:] ==
+              ["Preloading interactions.", "Bones is ready."])
+        check("both queues are full by the time he says ready",
+              bot.preloader.counts() == {"intro": 2, "joke": 2}, f"{bot.preloader.counts()}")
+        check("eyes pulse again afterwards", bot.servos.eye_mode == "pulse")
+    finally:
+        bot.shutdown()
+
+    bot, events = run(prep=lambda *a, **k: False)     # stocking fails
+    try:
+        bot.startup_sequence()
+        said = [e[1] for e in events if e[0] == "say"]
+        check("if stocking fails he still says ready (replies fall back to live)",
+              said[-1] == "Bones is ready." and ("start", None) in events, f"{said}")
+    finally:
+        bot.shutdown()
+
+    CONFIG.announce_startup = False
+    bot, events = run()
+    try:
+        bot.startup_sequence()
+        check("announcements off: silent, no blocking fill, refiller starts",
+              events == [("start", None)], f"{events}")
+    finally:
+        CONFIG.announce_startup = True
+        CONFIG.preload_intros, CONFIG.preload_jokes = 5, 5
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -944,7 +1198,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_preload, test_preload_in_the_bot, test_startup_sequence, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

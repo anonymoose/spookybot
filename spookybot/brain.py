@@ -80,6 +80,10 @@ MAX_CONTINUATIONS = 2
 _SENTENCE_END = re.compile(r"(?<=[.!?…])\s+|(?<=[.!?…])$")
 
 
+def split_sentences(text: str) -> list[str]:
+    return [p.strip() for p in _SENTENCE_END.split(text) if p and p.strip()]
+
+
 @dataclass
 class Conversation:
     messages: list = field(default_factory=list)
@@ -119,6 +123,46 @@ class Brain:
                 log.info("Loaded persona from %s", path)
                 return text
         return DEFAULT_PERSONA
+
+    def _extras(self) -> dict:
+        extra: dict = {}
+        if self.cfg.thinking:
+            extra["thinking"] = {"type": self.cfg.thinking}
+        if self.cfg.effort:
+            extra["output_config"] = {"effort": self.cfg.effort}
+        return extra
+
+    def generate(self, user_text: str, note: str | None = None,
+                 max_tokens: int = 200) -> str | None:
+        """One reply written outside the live conversation (nothing is added to
+        the history), for stocking the preload queues. No web search."""
+        content = f"[{note}]\n{user_text}" if note else user_text
+        try:
+            resp = self.client.messages.create(
+                model=self.cfg.model, max_tokens=max_tokens, system=self.persona,
+                messages=[{"role": "user", "content": content}], **self._extras())
+        except Exception as exc:
+            log.warning("PRELOAD text failed: %s", exc)
+            return None
+        usage = getattr(resp, "usage", None)
+        if usage is not None:
+            self.calls += 1
+            cost = call_cost(self.cfg.model, usage)
+            if cost is not None:
+                self.spent += cost
+        text = "".join(b.text for b in resp.content
+                       if getattr(b, "type", "") == "text").strip()
+        return text or None
+
+    def inject_turn(self, user_text: str, assistant_text: str) -> None:
+        """Record an exchange that was answered from the preload queue, so Claude
+        knows what was said when the conversation carries on."""
+        self.conversation.messages.append(
+            {"role": "user", "content": [{"type": "text", "text": user_text}]})
+        self.conversation.messages.append(
+            {"role": "assistant", "content": assistant_text})
+        self._trim()
+        self.conversation.touch()
 
     def _tools(self) -> list:
         if not self.cfg.web_search:
@@ -170,11 +214,7 @@ class Brain:
 
         # A talking head can't afford a silent reasoning pause, and thinking
         # would eat max_tokens. (Sampling params are gone on current models.)
-        extra: dict = {}
-        if self.cfg.thinking:
-            extra["thinking"] = {"type": self.cfg.thinking}
-        if self.cfg.effort:
-            extra["output_config"] = {"effort": self.cfg.effort}
+        extra = self._extras()
 
         log.info("CHAT -> %s: %r%s (%d messages in context)",
                  self.cfg.model, f"{prefix}{user_text}",
