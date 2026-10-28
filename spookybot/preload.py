@@ -77,7 +77,7 @@ class Preloader:
                 return None
         return sentences
 
-    def fill_once(self, kinds=None) -> int:
+    def fill_once(self, kinds=None, force: bool = False) -> int:
         """Top the queues up to their targets (all of them, or just `kinds`).
         Stops early on a failure or when the bot stops being idle. Returns how
         many replies were prepared."""
@@ -89,7 +89,7 @@ class Preloader:
                 with self._lock:
                     if len(self._queues[kind]) >= target:
                         break
-                if not self.idle():
+                if not force and not self.idle():
                     return made
                 sentences = self._make(kind)
                 if sentences is None:
@@ -108,7 +108,7 @@ class Preloader:
         long as the slower queue). Retries a failed pass up to `max_passes`
         times. Returns True if every queue is full."""
         for _ in range(max_passes):
-            workers = [threading.Thread(target=self.fill_once, args=([kind],))
+            workers = [threading.Thread(target=self.fill_once, args=([kind], True))
                        for kind in self.targets]
             for w in workers:
                 w.start()

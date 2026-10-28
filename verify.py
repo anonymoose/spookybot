@@ -1118,7 +1118,11 @@ def test_startup_sequence():
     def run(prep=None):
         bot = SpookyBot(CONFIG)
         events = []
-        bot.say = lambda s: events.append(("say", " ".join(list(s))))
+        # The real say() leaves the bot in SPEAK, which the preloader's
+        # background idle check treats as busy; the stub must do the same.
+        bot.say = lambda s: (setattr(bot, "state", "SPEAK"),
+                             events.append(("say", " ".join(list(s)))),
+                             bot.servos.set_eye_mode("pulse"))[1]
         real_fill = bot.preloader.fill_initial
         bot.preloader.fill_initial = lambda *a, **k: (events.append(("fill", None)),
                                                       (prep or real_fill)(*a, **k))[1]
