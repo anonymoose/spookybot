@@ -632,6 +632,59 @@ def test_startup_announcement():
         bot.shutdown()
 
 
+def test_eye_modes():
+    print("\neye modes follow what the bot is doing")
+    from spookybot.config import CONFIG
+    from spookybot.servos import ServoBus, eye_level
+    CONFIG.vision.enabled = False
+    bus = ServoBus(CONFIG.servos)
+    try:
+        t = bus._eyes_t0 + 0.7
+        check("default is the slow pulse",
+              bus.eye_mode == "pulse"
+              and abs(bus.eye_brightness(t) - eye_level(0.7, CONFIG.servos.eyes_period_s)) < 1e-9)
+        bus.set_eye_mode("steady")
+        check("steady is full on, always",
+              all(bus.eye_brightness(t + i * 0.37) == 1.0 for i in range(20)))
+        bus.set_eye_mode("flicker")
+        levels = [bus.eye_brightness(t + i * 0.2) for i in range(60)]
+        check("flicker stays in range", all(0.0 < v <= 1.0 for v in levels))
+        check("flicker actually varies", len(set(levels)) > 10, f"{len(set(levels))} levels")
+        check("flicker holds a level between changes",
+              bus.eye_brightness(bus._flicker_until - 0.001)
+              == bus.eye_brightness(bus._flicker_until - 0.002))
+        try:
+            bus.set_eye_mode("strobe")
+            check("unknown mode rejected", False)
+        except ValueError:
+            check("unknown mode rejected", True)
+    finally:
+        bus.close()
+
+    from spookybot.main import SpookyBot
+    bot = SpookyBot(CONFIG)
+    try:
+        modes = {}
+        for st in ("IDLE", "LISTEN", "THINK", "GREET", "SPEAK"):
+            bot.state = st
+            modes[st] = bot.servos.eye_mode
+        check("pulse while waiting for a guest",
+              modes["IDLE"] == modes["LISTEN"] == "pulse", f"{modes}")
+        check("flicker while waiting on Claude",
+              modes["THINK"] == modes["GREET"] == modes["SPEAK"] == "flicker", f"{modes}")
+        check("state still reads back", bot.state == "SPEAK")
+
+        seen = []
+        real_set = bot.servos.set_eye_mode
+        bot.servos.set_eye_mode = lambda m: (seen.append(m), real_set(m))[1]
+        bot.tts.stream = lambda sentence: iter([b"\x00\x01" * 400])
+        bot.say(iter(["Hello there."]))
+        check("steady once the voice starts, then back to pulse",
+              seen[-2:] == ["steady", "pulse"] and bot.servos.eye_mode == "pulse", f"{seen}")
+    finally:
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -668,7 +721,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

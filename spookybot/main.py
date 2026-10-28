@@ -63,7 +63,7 @@ class SpookyBot:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
         self.running = True
-        self.state = "IDLE"
+        self._state = "IDLE"
         self._last_greet = 0.0
 
         log.info("Initializing servos…")
@@ -120,12 +120,15 @@ class SpookyBot:
                 log.info("VOICE SAY: %s", sentence)
                 for chunk in self.tts.stream(sentence):
                     self.speaker.feed(chunk)
+                    if not spoke_anything:
+                        self.servos.set_eye_mode("steady")
                     spoke_anything = True
         finally:
             self.speaker.done_feeding()
             self.speaker.wait(timeout=30.0)
             self.speaker.close()
             self.servos.set_jaw(0.0)
+            self.servos.set_eye_mode("pulse")
             if self.cfg.audio.mute_mic_while_speaking:
                 # Short tail so room reverb doesn't get transcribed as a guest.
                 time.sleep(self.cfg.audio.mic_gate_tail_ms / 1000.0)
@@ -283,6 +286,23 @@ class SpookyBot:
             "judged, be specific about what you see."))
 
     # -- main loop ----------------------------------------------------------
+
+    # What the eyes do in each state: slow pulse while waiting for a guest, fast
+    # flicker while waiting on Claude (the intro, or STT then Claude), steady
+    # while the voice is playing. say() switches to steady on the first audio.
+    _EYES = {"IDLE": "pulse", "LISTEN": "pulse", "THINK": "flicker",
+             "GREET": "flicker", "SPEAK": "flicker"}
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @state.setter
+    def state(self, value: str) -> None:
+        self._state = value
+        servos = getattr(self, "servos", None)
+        if servos is not None:
+            servos.set_eye_mode(self._EYES.get(value, "pulse"))
 
     def announce_ready(self) -> None:
         """Say hello and the time once everything is up, so whoever restarted the

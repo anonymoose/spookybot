@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import math
+import random
 import threading
 import time
 
@@ -27,6 +28,9 @@ try:
     _HAVE_HW = True
 except Exception:  # pragma: no cover - dev machines have no I2C
     _HAVE_HW = False
+
+
+EYE_MODES = ("pulse", "steady", "flicker")
 
 
 def eye_level(t: float, period_s: float) -> float:
@@ -78,6 +82,11 @@ class ServoBus:
 
         self._eyes = None
         self._eyes_t0 = time.monotonic()
+        # "pulse" slow fade, "steady" full on, "flicker" fast random. Set by the
+        # orchestrator from what the bot is doing.
+        self.eye_mode = "pulse"
+        self._flicker_level = 1.0
+        self._flicker_until = 0.0
         servo_channels = {lim.channel for lim in self._limits.values()}
         if cfg.eyes_channel in servo_channels:
             log.warning("SB_EYES_CHANNEL=%d is a servo channel — eyes disabled",
@@ -131,6 +140,25 @@ class ServoBus:
 
     # -- internals ----------------------------------------------------------
 
+    def set_eye_mode(self, mode: str) -> None:
+        if mode not in EYE_MODES:
+            raise ValueError(f"eye mode must be one of {EYE_MODES}, not {mode!r}")
+        self.eye_mode = mode
+
+    def eye_brightness(self, now: float) -> float:
+        """Eye brightness 0..1 for the current mode at monotonic time `now`."""
+        mode = self.eye_mode
+        if mode == "steady":
+            return 1.0
+        if mode == "flicker":
+            if now >= self._flicker_until:
+                # Sample-and-hold: a new random level every 40-140 ms reads as
+                # a nervous flicker rather than a smooth fade.
+                self._flicker_level = random.uniform(0.08, 1.0)
+                self._flicker_until = now + random.uniform(0.04, 0.14)
+            return self._flicker_level
+        return eye_level(now - self._eyes_t0, self.cfg.eyes_period_s)
+
     def _loop(self) -> None:
         """Runs at 50 Hz — matches the PWM frame rate, no point going faster."""
         period = 1.0 / 50.0
@@ -155,8 +183,7 @@ class ServoBus:
                              100.0 * (new - lim.min_deg) / span,
                              "open" if name == "jaw" else "of range")
             if self._eyes is not None:
-                level = eye_level(time.monotonic() - self._eyes_t0,
-                                  self.cfg.eyes_period_s)
+                level = self.eye_brightness(time.monotonic())
                 try:
                     self._eyes.duty_cycle = int(level * 0xFFFF)
                 except Exception as exc:
