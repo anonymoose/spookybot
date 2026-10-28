@@ -81,6 +81,43 @@ JOKE_THEMES = ("skeletons and bones", "pumpkins", "ghosts", "vampires", "witches
                "cemeteries", "werewolves", "being a head on a wall")
 
 
+# Questions with a fixed answer in persona.md's "Party Questions", prepared ahead
+# like the jokes. Ken and Amy also need a where-type word, so a guest who says
+# "I'm Ken" isn't told he's off getting a hotdog.
+BATHROOM_RE = re.compile(r"\b(?:bathrooms?|restrooms?|toilets?|loo|washroom|pee)\b",
+                         re.IGNORECASE)
+WHERE_RE = re.compile(r"\b(?:where|find|seen|looking|hiding|locate)\b", re.IGNORECASE)
+NAME_RES = {"ken": re.compile(r"\bken\b", re.IGNORECASE),
+            "amy": re.compile(r"\bamy\b", re.IGNORECASE)}
+DIRECTIONS = {"bathroom": "Where is the bathroom?",
+              "ken": "Where is Ken?",
+              "amy": "Where is Amy?"}
+DIRECTIONS_NOTE = ("A guest asked this. Answer with the answer in your Party "
+                   "Questions notes, keeping its facts exactly, in your own "
+                   "voice: ONE or TWO short sentences, under 30 words in total. "
+                   "Add no facts of your own (not even whether they are at the "
+                   "party). "
+                   "It is spoken aloud, so no stage directions. Word it "
+                   "differently every time.")
+
+
+def directions_asked(text: str) -> list:
+    """The prepared-answer kinds a guest's words ask for, e.g. ["ken", "amy"]."""
+    kinds = ["bathroom"] if BATHROOM_RE.search(text) else []
+    if WHERE_RE.search(text):
+        kinds += [kind for kind, name in NAME_RES.items() if name.search(text)]
+    return kinds
+
+
+def directions_request(kind: str):
+    def request(avoid: list) -> tuple:
+        note = DIRECTIONS_NOTE
+        if avoid:
+            note += " Do not reuse these earlier answers: " + " | ".join(avoid) + "."
+        return DIRECTIONS[kind], note
+    return request
+
+
 def intro_request(avoid: list) -> tuple:
     note = INTRO_NOTE
     if avoid:
@@ -131,11 +168,14 @@ class SpookyBot:
         self.stt = Transcriber(cfg.stt, cfg.audio.sample_rate)
         self.tts = Speech(cfg.tts, cfg.audio.playback_rate)
         self.preloader = None
-        if cfg.preload_intros > 0 or cfg.preload_jokes > 0:
+        targets = {"intro": cfg.preload_intros, "joke": cfg.preload_jokes}
+        prompts = {"intro": intro_request, "joke": joke_request}
+        for kind in DIRECTIONS:
+            targets[kind] = cfg.preload_directions
+            prompts[kind] = directions_request(kind)
+        if any(n > 0 for n in targets.values()):
             self.preloader = Preloader(
-                self.brain, self.tts,
-                {"intro": cfg.preload_intros, "joke": cfg.preload_jokes},
-                {"intro": intro_request, "joke": joke_request},
+                self.brain, self.tts, targets, prompts,
                 idle=lambda: self.state in ("IDLE", "LISTEN"))
 
         self._idle_thread = threading.Thread(target=self._idle_motion, daemon=True)
@@ -276,6 +316,8 @@ class SpookyBot:
                 self.say(iter(prepared))
                 self.brain.inject_turn(text, " ".join(prepared))
                 return True
+        if self._answer_directions(text):
+            return True
         # A fresh still with every turn, so "what do you think of my costume?"
         # works at any point in the chat, not just the first reply. The brain
         # keeps only the newest image in context, so this costs one image per
@@ -283,6 +325,22 @@ class SpookyBot:
         if image is None and self.cfg.vision.costume_vision:
             image = self.vision.capture_jpeg()
         self.say(self.brain.respond(text, image_jpeg=image, scene_note=scene_note))
+        return True
+
+    def _answer_directions(self, text: str) -> bool:
+        """Play prepared answers for the bathroom / Ken / Amy, if every one the
+        guest asked for is ready ("Where are Ken and Amy?" plays both). If any
+        is missing, take none, so Claude answers the whole question live."""
+        if self.preloader is None:
+            return False
+        kinds = directions_asked(text)
+        counts = self.preloader.counts()
+        if not kinds or not all(counts.get(kind, 0) > 0 for kind in kinds):
+            return False
+        sentences = [s for kind in kinds for s in self.preloader.take(kind)]
+        log.info("VOICE %s from the preloaded queue", " + ".join(kinds))
+        self.say(iter(sentences))
+        self.brain.inject_turn(text, " ".join(sentences))
         return True
 
     def start_by_voice(self) -> bool:

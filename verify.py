@@ -920,7 +920,7 @@ def test_web_search():
 
 
 def test_preload():
-    print("\npreloaded replies (hello bones intros and jokes)")
+    print("\npreloaded replies (hello bones intros, jokes, directions)")
     from spookybot.config import CONFIG, BrainConfig
     from spookybot.brain import Brain, split_sentences
     from spookybot.preload import Preloader
@@ -940,6 +940,24 @@ def test_preload():
     check("joke trigger ignores other words",
           not any(main_mod.JOKE_RE.search(t) for t in
                   ["what is your name", "jokester", "who are you"]))
+
+    asked = main_mod.directions_asked
+    check("bathroom trigger: the usual words",
+          all(asked(t) == ["bathroom"] for t in
+              ["Where's the bathroom?", "is there a restroom", "I need the toilet",
+               "where can I pee", "where's the loo"]))
+    check("Ken / Amy need a where-type word",
+          asked("Where is Ken?") == ["ken"] and asked("have you seen amy") == ["amy"]
+          and asked("I'm looking for Ken") == ["ken"])
+    check("the sign's question asks for both",
+          asked("Where are Ken and Amy?") == ["ken", "amy"])
+    check("names without a where-type word, or inside other words, don't count",
+          not any(asked(t) for t in ["I'm Ken", "Amy says hi", "Kentucky fried",
+                                     "where is the beer", "what's your name"]))
+    q, note = main_mod.directions_request("bathroom")(["Down the hall."])
+    check("each answer is asked as the guest would, told to reuse persona.md's facts",
+          q == "Where is the bathroom?" and "Party Questions" in note
+          and "Do not reuse these earlier answers: Down the hall." in note)
 
     # -- speech cache -------------------------------------------------------
     tts = Speech(CONFIG.tts, CONFIG.audio.playback_rate)
@@ -1098,12 +1116,39 @@ def test_preload_in_the_bot():
         check("other requests never touch the joke queue",
               len(live) == 1 and bot.preloader.counts()["joke"] == 1)
 
-        CONFIG.preload_intros = CONFIG.preload_jokes = 0
+        # bathroom / Ken / Amy
+        check("3 of each directions answer by default",
+              all(bot.preloader.targets.get(k) == 3 for k in ("bathroom", "ken", "amy")),
+              f"{bot.preloader.targets}")
+        q = bot.preloader._queues
+        q["bathroom"].append(["End of the hall."])
+        bot.stt.transcribe = lambda a: "where's the bathroom"
+        live.clear(); spoken.clear()
+        check("a bathroom question plays the prepared answer, no Claude call",
+              bot.converse_turn(audio=audio) is True
+              and spoken == ["End of the hall."] and live == [], f"{spoken} {live}")
+        check("and goes into the history",
+              "End of the hall." in bot.brain.conversation.messages[-1]["content"])
+
+        q["ken"].append(["Ken is out."]); q["amy"].append(["Amy is in the garage."])
+        bot.stt.transcribe = lambda a: "Where are Ken and Amy?"
+        live.clear(); spoken.clear()
+        bot.converse_turn(audio=audio)
+        check("Ken and Amy together: both prepared answers, one after the other",
+              spoken == ["Ken is out.", "Amy is in the garage."] and live == [], f"{spoken}")
+
+        q["ken"].append(["Ken again."])
+        live.clear(); spoken.clear()
+        bot.converse_turn(audio=audio)
+        check("one of the two not ready -> answered live, the ready one kept",
+              len(live) == 1 and bot.preloader.counts()["ken"] == 1, f"{live} {bot.preloader.counts()}")
+
+        CONFIG.preload_intros = CONFIG.preload_jokes = CONFIG.preload_directions = 0
         off = SpookyBot(CONFIG)
-        check("both counts 0 -> no preloader at all", off.preloader is None)
+        check("all counts 0 -> no preloader at all", off.preloader is None)
         off.shutdown()
     finally:
-        CONFIG.preload_intros, CONFIG.preload_jokes = 5, 5
+        CONFIG.preload_intros, CONFIG.preload_jokes, CONFIG.preload_directions = 5, 5, 3
         bot.shutdown()
 
 
@@ -1112,7 +1157,7 @@ def test_startup_sequence():
     from spookybot.config import CONFIG
     CONFIG.vision.enabled = False
     CONFIG.announce_startup = True
-    CONFIG.preload_intros, CONFIG.preload_jokes = 2, 2
+    CONFIG.preload_intros, CONFIG.preload_jokes, CONFIG.preload_directions = 2, 2, 1
     from spookybot.main import SpookyBot
 
     def run(prep=None):
@@ -1139,8 +1184,9 @@ def test_startup_sequence():
         check("the lines are exactly as asked",
               [e[1] for e in events if e[0] == "say"][1:] ==
               ["Preloading interactions.", "Bones is ready."])
-        check("both queues are full by the time he says ready",
-              bot.preloader.counts() == {"intro": 2, "joke": 2}, f"{bot.preloader.counts()}")
+        check("every queue is full by the time he says ready",
+              bot.preloader.counts() == {"intro": 2, "joke": 2, "bathroom": 1, "ken": 1, "amy": 1},
+              f"{bot.preloader.counts()}")
         check("eyes pulse again afterwards", bot.servos.eye_mode == "pulse")
     finally:
         bot.shutdown()
@@ -1162,7 +1208,7 @@ def test_startup_sequence():
               events == [("start", None)], f"{events}")
     finally:
         CONFIG.announce_startup = True
-        CONFIG.preload_intros, CONFIG.preload_jokes = 5, 5
+        CONFIG.preload_intros, CONFIG.preload_jokes, CONFIG.preload_directions = 5, 5, 3
         bot.shutdown()
 
 

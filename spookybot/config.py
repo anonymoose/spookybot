@@ -220,6 +220,9 @@ class Config:
     # mentions a joke. The queues refill in the background while he is idle. 0 = off.
     preload_intros: int = _envi("SB_PRELOAD_INTROS", 5)
     preload_jokes: int = _envi("SB_PRELOAD_JOKES", 5)
+    # And this many answers each for "where's the bathroom?", "where's Ken?" and
+    # "where's Amy?", worded from persona.md's Party Questions. 0 = off.
+    preload_directions: int = _envi("SB_PRELOAD_DIRECTIONS", 3)
     log_level: str = _env("SB_LOG_LEVEL", "INFO")
 
 

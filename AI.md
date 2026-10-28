@@ -120,8 +120,9 @@ end at the 90th percentile):
 Claude is the slowest and least predictable step. Most of the replies logged
 before Oct 27 took about 6 seconds to start, while a benchmark in quieter
 conditions measured about 1 second. The handful since then have been closer to
-1.7 seconds. The jokes and introductions are **prepared in advance** (see
-below), so they skip Claude and Kokoro entirely and start immediately.
+1.7 seconds. Introductions, jokes and the house questions (bathroom, Ken,
+Amy) are **prepared in advance** (see below), so they skip Claude and Kokoro
+entirely and start immediately.
 
 ## 1. Seeing: the camera and the AI HAT
 
@@ -282,10 +283,17 @@ stateDiagram-v2
     Talking --> Thinking: web search
 ```
 
-## 6. Getting ahead: ready-made intros and jokes
+## 6. Getting ahead: ready-made answers
 
-The two most common requests, "Hello, Bones" and "tell me a joke", don't need
-a fresh trip to Claude. So Bones prepares them in advance.
+The most common requests don't need a fresh trip to Claude, so Bones prepares
+them in advance:
+
+| Request | Ready-made answers | Plays when a guest… |
+|---|---|---|
+| "Hello, Bones" | 5 introductions | says the wake phrase |
+| "Tell me a joke" | 5 jokes | mentions a joke |
+| "Where's the bathroom?" | 3 answers | mentions the bathroom, restroom, toilet… |
+| "Where's Ken?" / "Where's Amy?" | 3 answers each | asks where (or whether anyone has seen) Ken or Amy |
 
 ```mermaid
 sequenceDiagram
@@ -293,20 +301,25 @@ sequenceDiagram
     participant Claude as Claude
     participant Mini as Kokoro on mini
     Note over Pi: At startup ("Preloading interactions.")
-    loop 5 intros and 5 jokes
-        Pi->>Claude: Write a fresh intro or joke, not like the last few
+    loop each kind of answer, all kinds at once
+        Pi->>Claude: Write a fresh one, not like the last few
         Claude-->>Pi: Text
         Pi->>Mini: Voice it now
         Mini-->>Pi: Audio, kept ready
     end
     Note over Pi: "Bones is ready."
-    Note over Pi: Later: a guest asks for a joke
+    Note over Pi: Later: a guest asks for a joke, or where Ken is
     Pi->>Pi: Plays a prepared one instantly, then quietly makes a replacement while idle
 ```
 
 - Stocking up takes about **36 seconds** at startup.
 - Each joke gets a random theme (pumpkins, vampires, Florida in October…), and
   Claude is shown the recent ones so it doesn't repeat itself.
+- The bathroom, Ken and Amy answers are reworded from the facts in
+  `persona.md`, and Claude is told not to add any of its own. "Where are Ken
+  and Amy?", the question on the table sign, plays both answers back to back.
+- "Ken" or "Amy" alone isn't enough to trigger a ready-made answer; it has to be
+  a where-type question. A guest who says "I'm Ken" gets a live reply.
 - Refills only happen while nobody is talking to Bones, so they never slow down
   a live conversation.
 
@@ -317,7 +330,7 @@ The prop is designed to keep talking, even if not as well.
 ```mermaid
 flowchart LR
     q1["mini is down"] --> f1["Hearing and voice switch to backups on the Pi:<br/>much slower hearing (about 7 s), flatter voice"]
-    q2["Internet or Anthropic is down"] --> f2["Prepared intros and jokes still play.<br/>Anything else: My wires are crossed. Ask me again."]
+    q2["Internet or Anthropic is down"] --> f2["Ready-made answers still play.<br/>Anything else: My wires are crossed. Ask me again."]
     q3["AI HAT missing"] --> f3["Camera still takes costume photos,<br/>but can't see people arrive"]
     q4["Camera missing"] --> f4["Voice only, no costume comments"]
 ```
@@ -345,8 +358,8 @@ Only Claude costs money. Everything else runs on hardware we own.
 - **Per reply:** about **$0.004** before web search was turned on, about
   **$0.01** since. With web search on, every call carries more instructions:
   about 4,500 units of text ("tokens") per call instead of 1,400.
-- **So far:** **$0.48** for 131 replies, Oct 24–28. Prepared intros and jokes
-  add a few cents each time the bot starts.
+- **So far:** **$0.48** for 131 replies, Oct 24–28. Preparing the ready-made
+  answers adds a few cents each time the bot starts.
 - **A busy party:** at 100 conversations of three or four replies each, roughly
   **$3–4** for the night. Web searches add a small per-search fee on top.
 
