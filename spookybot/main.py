@@ -77,6 +77,8 @@ class SpookyBot:
 
         log.info("Initializing vision…")
         self.vision = Vision(cfg.vision)
+        self.vision.status_fn = lambda: (f"state {self.state}, "
+                                         f"eyes {self.servos.eye_mode}")
 
         log.info("Initializing brain…")
         self.brain = Brain(cfg.brain)

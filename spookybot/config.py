@@ -82,6 +82,9 @@ class VisionConfig:
     depart_frames: int = 25
     # Send one still to the model so it can comment on the costume.
     costume_vision: bool = _envb("SB_COSTUME_VISION", True)
+    # Live camera view with the detector's boxes (make view). localhost only,
+    # reached through an SSH tunnel. 0 = off.
+    liveview_port: int = _envi("SB_LIVEVIEW_PORT", 8081)
 
 
 # --------------------------------------------------------------- servos ----

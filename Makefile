@@ -64,6 +64,16 @@ tone:
 		echo "tone on card $$card ($$SB_OUTPUT_DEVICE), $$(amixer -c $$card sget PCM | grep -m1 -o "\[[0-9]*%\]")"; \
 		timeout 4 speaker-test -D plughw:$$card,0 -t sine -f 440 -c 2 >/dev/null 2>&1; true'
 
+# make view   watch the camera with the detector's boxes drawn on (what the bot
+# sees, what it counts as a guest, and what it rejected). The bot serves the
+# picture on the Pi's localhost only; this tunnels it here and opens a browser.
+# Ctrl-C to close. Port: SB_LIVEVIEW_PORT in .env (default 8081).
+VIEW_PORT ?= 8081
+view:
+	@echo "live view: http://localhost:$(VIEW_PORT)  (Ctrl-C to close)"
+	@(sleep 2; xdg-open http://localhost:$(VIEW_PORT) >/dev/null 2>&1 || true) &
+	ssh -N -L $(VIEW_PORT):localhost:$(VIEW_PORT) $(RPI)
+
 restart:
 	ssh $(RPI) 'sudo systemctl restart spookybot'
 

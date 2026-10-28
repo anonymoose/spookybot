@@ -727,6 +727,75 @@ def test_quiet_phrase():
         bot.shutdown()
 
 
+def test_liveview():
+    print("\nlive camera view")
+    try:
+        from PIL import Image
+    except ImportError:
+        print("  [SKIP] Pillow not installed here (the Pi has it via picamera2)")
+        return
+    import io
+    import urllib.request
+    from spookybot import liveview
+
+    img = Image.new("RGB", (640, 360), (40, 40, 40))
+    before = img.tobytes()
+    liveview.draw_overlay(img, [(0.1, 0.2, 0.9, 0.5, 0.91, ""),
+                                (0.2, 0.7, 0.4, 0.8, 0.31, "low")], "GUEST x1")
+    px = img.load()
+    check("accepted box drawn in green", px[int(0.2 * 640), int(0.5 * 360)] == liveview.GREEN)
+    check("rejected box drawn in orange", px[int(0.7 * 640), int(0.3 * 360)] == liveview.ORANGE)
+    corner = [px[x, y] for x in range(0, 70) for y in range(0, 24)]
+    check("header text drawn on a dark strip",
+          img.tobytes() != before and (0, 0, 0) in corner and (255, 255, 255) in corner)
+
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    from spookybot.vision import Vision
+    v = Vision(CONFIG.vision)
+    check("no camera -> no frame, no crash", v.render_overlay() is None)
+
+    buf = io.BytesIO(); img.save(buf, format="JPEG")
+    frames = [buf.getvalue()]
+    server = liveview.start(lambda: frames[0], 0)
+    try:
+        port = server.server_address[1]
+        check("listens on localhost only", server.server_address[0] == "127.0.0.1",
+              f"{server.server_address[0]}")
+        r = urllib.request.urlopen(f"http://127.0.0.1:{port}/snapshot.jpg", timeout=5)
+        body = r.read()
+        check("snapshot is a jpeg", r.status == 200
+              and r.headers["Content-Type"] == "image/jpeg" and body[:2] == b"\xff\xd8")
+        page = urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5).read()
+        check("page embeds the stream", b"/stream" in page)
+        r = urllib.request.urlopen(f"http://127.0.0.1:{port}/stream", timeout=5)
+        chunk = r.read(4096)
+        check("stream is multipart mjpeg",
+              "multipart/x-mixed-replace" in r.headers["Content-Type"]
+              and b"--frame" in chunk and b"image/jpeg" in chunk)
+        r.close()
+        import json
+        import logging
+        logging.getLogger("spookybot.test").warning("VOICE hello from the log panel")
+        j = json.loads(urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/logs?after=0", timeout=5).read())
+        check("log panel gets the bot's log lines",
+              any("hello from the log panel" in l["text"] for l in j["lines"]), f"{j['last']}")
+        j2 = json.loads(urllib.request.urlopen(
+            f"http://127.0.0.1:{port}/logs?after={j['last']}", timeout=5).read())
+        check("and only the new ones on the next poll", j2["lines"] == [])
+        check("page has the log panel", b'id=log' in page and b"/logs?after=" in page)
+        frames[0] = None
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/snapshot.jpg", timeout=5)
+            check("503 when the camera has no frame", False)
+        except urllib.error.HTTPError as exc:
+            check("503 when the camera has no frame", exc.code == 503)
+    finally:
+        server.shutdown()
+        logging.getLogger().removeHandler(server.log_buffer)
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -763,7 +832,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

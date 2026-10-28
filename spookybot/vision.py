@@ -17,6 +17,7 @@ import io
 import logging
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 log = logging.getLogger(__name__)
@@ -64,6 +65,14 @@ class Vision:
         self._last_error = ""
         self._best_score = 0.0
         self._status_t0 = time.monotonic()
+        # For the live view: every person box from the latest frame (rejected
+        # ones carry a reason), a rolling frame clock, and a caller-supplied
+        # status line (the orchestrator adds what the bot is doing).
+        self._dets: list = []
+        self._frame_times: deque = deque(maxlen=30)
+        self._render_lock = threading.Lock()
+        self._liveview = None
+        self.status_fn = None
 
         if not cfg.enabled:
             log.info("VISION disabled by config")
@@ -97,6 +106,14 @@ class Vision:
             log.info("VISION detection started: model %s, threshold %.2f, "
                      "min box height %.2f", self.cfg.model, self.cfg.threshold,
                      self.cfg.min_box_height)
+
+        if self._picam is not None and cfg.liveview_port:
+            try:
+                from . import liveview
+                self._liveview = liveview.start(self.render_overlay,
+                                                cfg.liveview_port)
+            except Exception as exc:
+                log.warning("VISION live view unavailable: %s", exc)
 
     def _start_camera(self) -> None:
         self._picam = Picamera2()
@@ -146,17 +163,22 @@ class Vision:
         # Hailo NMS output: one array per class of [y0, x0, y1, x1, score] rows,
         # normalized. Only the person list matters.
         people = []
+        dets = []
         for det in outputs[PERSON_CLASS]:
             y0, x0, y1, x1, score = (float(v) for v in det[:5])
             self._best_score = max(self._best_score, score)
-            if score < self.cfg.threshold:
-                continue
             height = abs(y1 - y0)
-            if height < self.cfg.min_box_height:
+            reason = ("low" if score < self.cfg.threshold
+                      else "small" if height < self.cfg.min_box_height else "")
+            dets.append((y0, x0, y1, x1, score, reason))
+            if reason:
                 continue
             people.append(((x0 + x1) / 2.0, (y0 + y1) / 2.0, height, score))
 
         self._frames += 1
+        self._frame_times.append(time.monotonic())
+        with self._lock:
+            self._dets = dets
         if people:
             # Track the nearest guest — largest box wins.
             people.sort(key=lambda p: p[2], reverse=True)
@@ -194,6 +216,39 @@ class Vision:
         with self._lock:
             return Guest(**vars(self.guest))
 
+    def render_overlay(self, quality: int = 70) -> bytes | None:
+        """The current frame with detection boxes and a status line drawn on.
+        Called by the live view, once per frame sent to each viewer."""
+        if self._picam is None:
+            return None
+        from .liveview import draw_overlay
+        try:
+            with self._render_lock:
+                image = self._picam.capture_image("main").convert("RGB")
+            image.thumbnail((960, 540))
+            with self._lock:
+                dets = list(self._dets)
+                present, count = self.guest.present, self.guest.count
+            times = list(self._frame_times)
+            fps = ((len(times) - 1) / (times[-1] - times[0])
+                   if len(times) > 1 and times[-1] > times[0] else 0.0)
+            parts = [f"GUEST x{count}" if present else "nobody",
+                     f"{fps:.0f} fps" if self.detecting else "no detector",
+                     f"threshold {self.cfg.threshold:.2f}, min height "
+                     f"{self.cfg.min_box_height:.2f}"]
+            if self.status_fn is not None:
+                try:
+                    parts.append(self.status_fn())
+                except Exception:
+                    pass
+            draw_overlay(image, dets, "  |  ".join(parts))
+            buf = io.BytesIO()
+            image.save(buf, format="JPEG", quality=quality)
+            return buf.getvalue()
+        except Exception as exc:
+            log.debug("VISION live view frame failed: %s", exc)
+            return None
+
     def capture_jpeg(self, quality: int = 70) -> bytes | None:
         """One still for costume commentary. Downscaled — the model does not
         need 720p to tell a witch from a pirate, and small images are faster."""
@@ -212,6 +267,10 @@ class Vision:
             return None
 
     def close(self) -> None:
+        if self._liveview is not None:
+            self._liveview.shutdown()
+            logging.getLogger().removeHandler(self._liveview.log_buffer)
+            self._liveview = None
         if self.detecting:
             log.info("VISION detection stopped")
         self._running = False
