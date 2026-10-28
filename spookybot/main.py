@@ -17,6 +17,7 @@ skipped. The first reply carries the costume still when the camera works.
 from __future__ import annotations
 
 import argparse
+import itertools
 import logging
 import random
 import re
@@ -27,12 +28,13 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from . import net
 from .audio_io import MicStream, Speaker
 from .brain import Brain
 from .config import CONFIG, Config
 from .preload import Preloader
 from .servos import ServoBus
-from .stt import Transcriber
+from .stt import EarlyTranscript, Transcriber
 from .tts import Speech
 from .vad import UtteranceDetector
 from .vision import Vision
@@ -54,6 +56,19 @@ CONFUSED = [
     "What was that?",
 ]
 
+
+# Played the instant a guest finishes a question Claude has to answer, while
+# it writes the reply: what a person says while they think. Voiced at startup.
+FILLERS = ("Hmm.", "Hmm, let me see.", "Well, well.", "Ooh.", "Let me think.",
+           "Oh, now.")
+
+# A guest taking their leave ends the conversation with a goodbye, the way
+# "quiet bones" does, instead of waiting out the listen timeout.
+GOODBYE_RE = re.compile(r"\b(?:good ?bye|bye|good ?night|see (?:you|ya)|gotta go|"
+                        r"got to go|have to go|nice (?:talking|chatting|meeting))\b",
+                        re.IGNORECASE)
+GOODBYE_NOTE = ("The guest is saying goodbye and leaving. Say goodbye in ONE "
+                "short sentence, in character.")
 
 # Any request that mentions a joke gets a prepared one ("joke about cats" too).
 JOKE_RE = re.compile(r"\bjokes?\b", re.IGNORECASE)
@@ -178,8 +193,13 @@ class SpookyBot:
                 self.brain, self.tts, targets, prompts,
                 idle=lambda: self.state in ("IDLE", "LISTEN"))
 
+        self._last_filler = None
+
         self._idle_thread = threading.Thread(target=self._idle_motion, daemon=True)
         self._idle_thread.start()
+        if cfg.keep_warm_s > 0:
+            threading.Thread(target=self._keep_warm, daemon=True,
+                             name="keep-warm").start()
         log.info("Ready.")
 
     # -- behaviors ----------------------------------------------------------
@@ -193,6 +213,45 @@ class SpookyBot:
                 continue
             self.servos.set_normalized("pan", random.uniform(0.35, 0.65))
             self.servos.set_normalized("tilt", random.uniform(0.4, 0.6))
+
+    def _keep_warm(self) -> None:
+        """Keep the connections to the speech server and Anthropic open (see
+        net.py): a reused connection answers in ~0.3 s, a fresh one in ~6 s."""
+        last_claude = 0.0
+        while self.running:
+            time.sleep(net.SPEECH_PING_S)
+            for name, ping in (("speech-to-text", self.stt.ping),
+                               ("text-to-speech", self.tts.ping)):
+                try:
+                    ping()
+                except Exception as exc:
+                    log.debug("keep-warm %s ping failed: %s", name, exc)
+            if time.monotonic() - last_claude >= self.cfg.keep_warm_s:
+                last_claude = time.monotonic()
+                try:
+                    self.brain.ping()
+                except Exception as exc:
+                    log.debug("keep-warm Anthropic ping failed: %s", exc)
+
+    def _early_transcript(self) -> EarlyTranscript:
+        vad, audio = self.cfg.vad, self.cfg.audio
+        block = audio.sample_rate * audio.block_ms // 1000
+        return EarlyTranscript(self.stt, (vad.end_frames - vad.pause_frames) * block)
+
+    def prepare_fillers(self) -> None:
+        ready = sum(self.tts.keep(line) for line in FILLERS)
+        log.info("VOICE %d of %d fillers ready", ready, len(FILLERS))
+
+    def _filler(self) -> str | None:
+        """A filler to play while Claude answers, or None (by chance, or none
+        ready). Never the same one twice in a row."""
+        if random.random() >= self.cfg.filler_chance:
+            return None
+        ready = [f for f in FILLERS if f != self._last_filler and self.tts.is_kept(f)]
+        if not ready:
+            return None
+        self._last_filler = random.choice(ready)
+        return self._last_filler
 
     def _track_guest(self) -> None:
         guest = self.vision.snapshot()
@@ -279,11 +338,14 @@ class SpookyBot:
         self.state = "LISTEN"
         self._track_guest()
 
+        early = None
         if audio is None:
+            early = self._early_transcript()
             audio = self.detector.capture(
                 self.mic,
                 timeout_s=self.cfg.listen_timeout_s,
                 on_speech_start=lambda: setattr(self, "state", "LISTEN"),
+                on_pause=early.on_pause,
             )
             if audio is None:
                 return False
@@ -291,7 +353,7 @@ class SpookyBot:
         self.state = "THINK"
         if text is None:
             try:
-                text = self.stt.transcribe(audio)
+                text = early.result(audio) if early else self.stt.transcribe(audio)
             except Exception as exc:
                 log.error("VOICE STT failed: %s", exc)
                 self.say(iter([random.choice(CONFUSED)]))
@@ -309,6 +371,10 @@ class SpookyBot:
             log.info("VOICE QUIET %r: ending the conversation", self.cfg.quiet_phrase)
             self.say(iter(["As you wish."]))
             return False
+        if GOODBYE_RE.search(text):
+            log.info("VOICE goodbye: ending the conversation")
+            self.say(self.brain.respond(text, scene_note=GOODBYE_NOTE))
+            return False
         if self.preloader is not None and JOKE_RE.search(text):
             prepared = self.preloader.take("joke")
             if prepared:
@@ -324,7 +390,14 @@ class SpookyBot:
         # call and no more.
         if image is None and self.cfg.vision.costume_vision:
             image = self.vision.capture_jpeg()
-        self.say(self.brain.respond(text, image_jpeg=image, scene_note=scene_note))
+        # The reply is a generator: nothing is sent to Claude until say() asks
+        # for its first sentence, which is after the filler has started playing.
+        sentences = self.brain.respond(text, image_jpeg=image, scene_note=scene_note)
+        filler = self._filler()
+        if filler:
+            log.info("VOICE filler %r while Claude answers", filler)
+            sentences = itertools.chain([filler], sentences)
+        self.say(sentences)
         return True
 
     def _answer_directions(self, text: str) -> bool:
@@ -351,10 +424,12 @@ class SpookyBot:
         spoke and a conversation started.
         """
         self.state = "IDLE"
+        early = self._early_transcript()
         audio = self.detector.capture(
             self.mic,
             timeout_s=self.cfg.listen_timeout_s,
             on_speech_start=lambda: setattr(self, "state", "LISTEN"),
+            on_pause=early.on_pause if self.cfg.wake_phrase else None,
         )
         if audio is None:
             return False
@@ -363,7 +438,7 @@ class SpookyBot:
             # Everything said in the room gets transcribed here; only the wake
             # phrase starts a conversation.
             try:
-                heard = self.stt.transcribe(audio)
+                heard = early.result(audio)
             except Exception as exc:
                 log.error("VOICE STT failed: %s", exc)
                 return False
@@ -458,6 +533,8 @@ class SpookyBot:
         """
         if self.cfg.announce_startup:
             self.announce_ready()
+            if self.cfg.filler_chance > 0:
+                self.prepare_fillers()
             if self.preloader is not None:
                 self._speak_line("Preloading interactions.")
                 self.servos.set_eye_mode("flicker")   # waiting on Claude
@@ -468,6 +545,8 @@ class SpookyBot:
                          "trying; replies not ready are written live")
                 self.servos.set_eye_mode("pulse")
             self._speak_line("Bones is ready.")
+        elif self.cfg.filler_chance > 0:
+            threading.Thread(target=self.prepare_fillers, daemon=True).start()
         if self.preloader is not None:
             self.preloader.start()
 

@@ -9,9 +9,11 @@ import io
 import logging
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 
+from . import net
 from .config import STTConfig
 
 log = logging.getLogger(__name__)
@@ -35,11 +37,16 @@ class Transcriber:
         if cfg.backend == "openai":
             from openai import OpenAI
             # Fail fast so the local fallback kicks in while the guest is still there.
-            self._client = OpenAI(timeout=10.0, max_retries=0)
+            self._client = OpenAI(timeout=10.0, max_retries=0, **net.openai_kwargs())
         elif cfg.backend == "faster-whisper":
             self._load_local()
         else:
             raise ValueError(f"unknown STT backend: {cfg.backend}")
+
+    def ping(self) -> None:
+        """Touch the speech server so the kept-open connection stays open."""
+        if self.cfg.backend == "openai":
+            self._client.models.list()
 
     def _load_local(self) -> None:
         from faster_whisper import WhisperModel
@@ -89,3 +96,41 @@ class Transcriber:
             samples, language=self.cfg.language, beam_size=1, vad_filter=False
         )
         return " ".join(seg.text for seg in segments).strip()
+
+
+class EarlyTranscript:
+    """Start transcribing at the guest's first pause, not after the end timer.
+
+    Whisper reads the whole clip in one go (about a second however short it
+    is), so it can't usefully listen along. What it can do is start the moment
+    the guest pauses: if the pause turns into the end of the utterance, the text
+    is ready about 0.5 s sooner. If they carry on talking, that run is dropped
+    and the next pause starts a new one.
+
+    Pass `on_pause` to UtteranceDetector.capture() and the captured audio to
+    result(). `tail_samples` is the silence between a pause firing and the
+    utterance ending: (end_frames - pause_frames) blocks.
+    """
+
+    _pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="stt-early")
+
+    def __init__(self, stt: Transcriber, tail_samples: int) -> None:
+        self.stt = stt
+        self.tail_samples = tail_samples
+        self._samples = -1
+        self._future = None
+
+    def on_pause(self, audio: np.ndarray) -> None:
+        if self._future is not None:
+            self._future.cancel()       # superseded; a no-op if it already started
+        self._samples = len(audio)
+        self._future = self._pool.submit(self.stt.transcribe, audio)
+
+    def result(self, audio: np.ndarray) -> str:
+        """The transcript of `audio`, from the early run if it covered it."""
+        if (self._future is not None and not self._future.cancelled()
+                and len(audio) - self._samples == self.tail_samples):
+            log.info("VOICE STT started at the pause (%.0f ms of silence early)",
+                     self.tail_samples * 1000 / self.stt.sample_rate)
+            return self._future.result()
+        return self.stt.transcribe(audio)

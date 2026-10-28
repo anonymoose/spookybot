@@ -60,7 +60,11 @@ class VADConfig:
     # enough. Calibrate with tools/calibrate_noise.py at the actual party volume.
     rms_floor: float = _envf("SB_RMS_FLOOR", 450.0)
     start_frames: int = _envi("SB_VAD_START_FRAMES", 5)       # ~100ms of speech to open
-    end_frames: int = _envi("SB_VAD_END_FRAMES", 35)          # ~700ms of silence to close
+    end_frames: int = _envi("SB_VAD_END_FRAMES", 25)          # ~500ms of silence to close
+    # Start transcribing at the first pause this long (~200ms) instead of when
+    # end_frames confirms the guest is done: by then the text is nearly ready.
+    # 0 = transcribe only after the end.
+    pause_frames: int = _envi("SB_VAD_PAUSE_FRAMES", 10)
     max_utterance_s: float = _envf("SB_MAX_UTTERANCE_S", 12.0)
     min_utterance_s: float = _envf("SB_MIN_UTTERANCE_S", 0.4)
     preroll_ms: int = _envi("SB_PREROLL_MS", 300)             # audio kept from before trigger
@@ -158,6 +162,9 @@ class BrainConfig:
     conversation_timeout_s: float = _envf("SB_CONVO_TIMEOUT_S", 45.0)
     # How many past greetings it remembers, to spot repeat costumes. 0 = off.
     greeting_memory: int = _envi("SB_GREETING_MEMORY", 5)
+    # Recent replies remembered across guests, so the same question asked again
+    # gets told what it said last time and answers differently. 0 = off.
+    reply_memory: int = _envi("SB_REPLY_MEMORY", 20)
     persona_file: str = _env("SB_PERSONA", "persona.md")
 
 
@@ -223,6 +230,14 @@ class Config:
     # And this many answers each for "where's the bathroom?", "where's Ken?" and
     # "where's Amy?", worded from persona.md's Party Questions. 0 = off.
     preload_directions: int = _envi("SB_PRELOAD_DIRECTIONS", 3)
+    # Chance (0..1) of a short "Hmm." the moment a guest finishes a question that
+    # Claude has to answer, so the wait for the reply doesn't sound like silence.
+    # Never the same one twice in a row. 0 = off.
+    filler_chance: float = _envf("SB_FILLER_CHANCE", 0.7)
+    # Ping Anthropic and the speech server this often (seconds) to keep their
+    # connections open. On the Pi's lossy Wi-Fi a fresh connection costs ~6 s
+    # (DNS and TCP retries); a kept-open one, ~0.3 s. 0 = off.
+    keep_warm_s: float = _envf("SB_KEEP_WARM_S", 20.0)
     log_level: str = _env("SB_LOG_LEVEL", "INFO")
 
 

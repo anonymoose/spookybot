@@ -17,6 +17,7 @@ import time
 from collections import deque
 from dataclasses import dataclass, field
 
+from . import net
 from .config import BrainConfig
 
 log = logging.getLogger(__name__)
@@ -84,6 +85,11 @@ def split_sentences(text: str) -> list[str]:
     return [p.strip() for p in _SENTENCE_END.split(text) if p and p.strip()]
 
 
+def same_question(text: str) -> str:
+    """A question reduced to its words, so "Who ARE you?" matches "who are you"."""
+    return " ".join(re.findall(r"[a-z0-9']+", text.lower()))
+
+
 @dataclass
 class Conversation:
     messages: list = field(default_factory=list)
@@ -101,18 +107,26 @@ class Brain:
         from anthropic import Anthropic
 
         self.cfg = cfg
-        self.client = Anthropic()
+        self.client = Anthropic(**net.anthropic_kwargs())
         self.persona = self._load_persona()
         self.conversation = Conversation()
         # What the head said to its last few arrivals, newest last. Survives
         # reset() so it can notice a costume it has already seen tonight.
         self.recent_greetings: deque[str] = deque(maxlen=cfg.greeting_memory)
+        # (question, reply) for recent live replies, across guests. Claude can't
+        # be told to vary its wording any more, so the same question would get
+        # the same answer all night; seeing its last answer, it picks another.
+        self.recent_replies: deque[tuple[str, str]] = deque(maxlen=cfg.reply_memory)
         self.calls = 0
         self.searches = 0
         # Called with True when Claude starts a web search (the voice goes quiet
         # until results arrive) and False when it starts talking again.
         self.on_wait = None
         self.spent = 0.0      # dollars since the bot started
+
+    def ping(self) -> None:
+        """A free request that keeps the connection to Anthropic open."""
+        self.client.models.retrieve(self.cfg.model)
 
     def _load_persona(self) -> str:
         path = self.cfg.persona_file
@@ -196,6 +210,13 @@ class Brain:
     def respond(self, user_text: str, image_jpeg: bytes | None = None,
                 scene_note: str | None = None):
         """Yield complete sentences as Claude produces them."""
+        question = same_question(user_text)
+        said = [reply for q, reply in self.recent_replies if q == question]
+        if said:
+            repeat = ("You recently answered this same question with: "
+                      + " | ".join(f'"{r}"' for r in said[-3:])
+                      + ". Answer it differently this time.")
+            scene_note = f"{scene_note} {repeat}" if scene_note else repeat
         content: list = []
         if image_jpeg is not None:
             content.append({
@@ -297,6 +318,8 @@ class Brain:
         if full.strip():
             self.conversation.messages.append(
                 {"role": "assistant", "content": full.strip()})
+            if self.recent_replies.maxlen:
+                self.recent_replies.append((question, full.strip()))
         self._trim()
         self.conversation.touch()
 

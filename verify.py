@@ -1240,6 +1240,168 @@ def test_mic_gating():
         mic.close()
 
 
+def test_early_transcript():
+    print("\ntranscribing at the first pause")
+    from spookybot.config import CONFIG
+    from spookybot.vad import UtteranceDetector
+    from spookybot.stt import EarlyTranscript
+
+    vad = CONFIG.vad
+    check("ends after ~0.5 s of silence, starts transcribing at ~0.2 s",
+          vad.end_frames == 25 and vad.pause_frames == 10, f"{vad.end_frames}/{vad.pause_frames}")
+    block = int(CONFIG.audio.sample_rate * CONFIG.audio.block_ms / 1000)
+
+    class Mic:
+        """Speech, a short pause, more speech, then silence."""
+        def __init__(self, seq):
+            self.seq, self.i = seq, 0
+        def read(self, timeout=0.5):
+            loud = self.seq[self.i] if self.i < len(self.seq) else 0
+            self.i += 1
+            return (np.random.randn(block) * (4000 if loud else 30)).astype(np.int16)
+
+    det = UtteranceDetector(vad, CONFIG.audio.sample_rate, CONFIG.audio.block_ms)
+    pauses = []
+    seq = [0] * 5 + [1] * 30 + [0] * 12 + [1] * 30 + [0] * 60
+    audio = det.capture(Mic(seq), timeout_s=5.0, on_pause=lambda a: pauses.append(len(a)))
+    check("a pause fires for the mid-sentence gap and for the end",
+          len(pauses) == 2, f"{len(pauses)} pauses")
+    tail = (vad.end_frames - vad.pause_frames) * block
+    check("the last pause is the end: the utterance is that audio plus the tail",
+          audio is not None and pauses and len(audio) - pauses[-1] == tail)
+
+    calls = []
+    class STT:
+        sample_rate = CONFIG.audio.sample_rate
+        def transcribe(self, a):
+            calls.append(len(a))
+            return f"heard {len(a)}"
+    early = EarlyTranscript(STT(), tail)
+    early.on_pause(np.zeros(1000, dtype=np.int16))
+    text = early.result(np.zeros(1000 + tail, dtype=np.int16))
+    check("ended at that pause -> the early transcript is used, no second call",
+          text == "heard 1000" and calls == [1000], f"{text} {calls}")
+    calls.clear()
+    early = EarlyTranscript(STT(), tail)
+    early.on_pause(np.zeros(1000, dtype=np.int16))
+    text = early.result(np.zeros(5000 + tail, dtype=np.int16))   # they kept talking
+    check("speech after the pause -> transcribes the whole clip instead",
+          text == f"heard {5000 + tail}", f"{text}")
+    calls.clear()
+    text = EarlyTranscript(STT(), tail).result(np.zeros(800, dtype=np.int16))
+    check("no pause seen -> plain transcription", text == "heard 800" and calls == [800])
+
+
+def test_fillers_goodbye_repeats():
+    print("\nfillers, goodbyes, and not repeating answers")
+    import spookybot.main as main_mod
+    from spookybot.config import CONFIG
+    from spookybot.brain import Brain
+    CONFIG.vision.enabled = False
+    persona = open(CONFIG.brain.persona_file, encoding="utf-8").read()
+    check("persona asks for a short first sentence", "very short first sentence" in persona)
+
+    bot = main_mod.SpookyBot(CONFIG)
+    try:
+        spoken, heard = [], []
+        real_respond = bot.brain.respond
+        bot.say = lambda s: spoken.extend(list(s))
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            heard.append((text, scene_note)), real_respond(text, image_jpeg=image_jpeg,
+                                                           scene_note=scene_note))[1]
+        audio = np.zeros(1600, dtype=np.int16)
+
+        # fillers
+        bot.prepare_fillers()
+        check("fillers are voiced and kept", all(bot.tts.is_kept(f) for f in main_mod.FILLERS))
+        CONFIG.filler_chance = 1.0
+        bot.stt.transcribe = lambda a: "what are you supposed to be"
+        firsts = []
+        for _ in range(6):
+            spoken.clear()
+            bot.converse_turn(audio=audio)
+            firsts.append(spoken[0])
+        check("a filler plays first, then Claude's reply",
+              all(f in main_mod.FILLERS for f in firsts) and len(spoken) > 1, f"{spoken}")
+        check("never the same filler twice in a row",
+              all(a != b for a, b in zip(firsts, firsts[1:])), f"{firsts}")
+        CONFIG.filler_chance = 0.0
+        spoken.clear(); bot.converse_turn(audio=audio)
+        check("chance 0 -> no filler", spoken and spoken[0] not in main_mod.FILLERS)
+        CONFIG.filler_chance = 1.0
+        bot.preloader._queues["joke"].append(["Prepared joke."])
+        bot.stt.transcribe = lambda a: "tell me a joke"
+        spoken.clear(); bot.converse_turn(audio=audio)
+        check("prepared answers play with no filler", spoken == ["Prepared joke."], f"{spoken}")
+
+        # goodbyes
+        check("goodbye phrases match", all(main_mod.GOODBYE_RE.search(t) for t in
+              ["ok bye", "Goodbye Bones!", "good night", "see you later", "gotta go",
+               "nice talking to you", "see ya"]))
+        check("other words don't", not any(main_mod.GOODBYE_RE.search(t) for t in
+              ["maybe", "Byers", "I'm going as a ghost", "can you see me"]))
+        bot.stt.transcribe = lambda a: "Okay, bye Bones!"
+        heard.clear(); spoken.clear()
+        check("a goodbye ends the conversation", bot.converse_turn(audio=audio) is False)
+        check("with a short goodbye from Claude",
+              heard and heard[-1][1] == main_mod.GOODBYE_NOTE and spoken, f"{heard}")
+    finally:
+        CONFIG.filler_chance = 0.7
+        bot.shutdown()
+
+    # not repeating answers
+    M = sys.modules["anthropic"].Anthropic().messages.__class__
+    brain = Brain(CONFIG.brain)
+    list(brain.respond("Who ARE you?"))
+    brain.reset()                                     # a different guest
+    list(brain.respond("who are you"))
+    sent = M.last_kwargs["messages"][-1]["content"][-1]["text"]
+    check("the same question again is shown the last answer",
+          "You recently answered this same question with" in sent
+          and "Bold choice." in sent, sent[:120])
+    list(brain.respond("what's your favourite candy"))
+    sent = M.last_kwargs["messages"][-1]["content"][-1]["text"]
+    check("a new question isn't", "recently answered" not in sent)
+    CONFIG.brain.reply_memory = 0
+    quiet = Brain(CONFIG.brain)
+    list(quiet.respond("who are you")); list(quiet.respond("who are you"))
+    check("memory 0 -> off", "recently answered" not in
+          M.last_kwargs["messages"][-1]["content"][-1]["text"])
+    CONFIG.brain.reply_memory = 20
+
+
+def test_keep_warm():
+    print("\nkeeping connections open")
+    import spookybot.net as net
+    import spookybot.main as main_mod
+    from spookybot.config import CONFIG
+    check("falls back to the default HTTP client when the SDK can't take one",
+          isinstance(net.anthropic_kwargs(), dict) and isinstance(net.openai_kwargs(), dict))
+    check("mini is pinged inside its 5 s idle limit", net.SPEECH_PING_S < 5)
+    CONFIG.vision.enabled = False
+    saved = net.SPEECH_PING_S, CONFIG.keep_warm_s
+    net.SPEECH_PING_S, CONFIG.keep_warm_s = 0.05, 0.1
+    bot = main_mod.SpookyBot(CONFIG)
+    pings = []
+    try:
+        bot.stt.ping = lambda: pings.append("stt")
+        bot.tts.ping = lambda: pings.append("tts")
+        bot.brain.ping = lambda: pings.append("claude")
+        time.sleep(0.5)
+        check("pings the speech server and Anthropic while running",
+              {"stt", "tts", "claude"} <= set(pings), f"{sorted(set(pings))}")
+        check("the speech server more often than Anthropic",
+              pings.count("stt") > pings.count("claude"), f"{pings.count('stt')} vs {pings.count('claude')}")
+        bot.stt.ping = lambda: (_ for _ in ()).throw(OSError("mini down"))
+        time.sleep(0.2)
+        check("a failed ping is shrugged off", bot.running)
+    finally:
+        bot.shutdown()
+        net.SPEECH_PING_S, CONFIG.keep_warm_s = saved
+    n = len(pings); time.sleep(0.3)
+    check("pings stop at shutdown", len(pings) == n)
+
+
 def main():
     print("=" * 60)
     print("spookybot headless verification")
@@ -1249,6 +1411,7 @@ def main():
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
                test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_preload, test_preload_in_the_bot, test_startup_sequence, test_mic_gating,
+               test_early_transcript, test_fillers_goodbye_repeats, test_keep_warm,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

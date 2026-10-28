@@ -47,10 +47,13 @@ class UtteranceDetector:
         except Exception:
             return True
 
-    def capture(self, mic, timeout_s: float, on_speech_start=None) -> np.ndarray | None:
+    def capture(self, mic, timeout_s: float, on_speech_start=None,
+                on_pause=None) -> np.ndarray | None:
         """Block until a complete utterance is captured, or `timeout_s` elapses.
 
         Returns int16 mono audio, or None if nobody said anything usable.
+        `on_pause(audio_so_far)` is called each time the guest goes quiet for
+        `pause_frames` (see stt.EarlyTranscript).
         """
         from collections import deque
 
@@ -85,6 +88,9 @@ class UtteranceDetector:
 
             collected.append(block)
             silence_run = 0 if speech else silence_run + 1
+            if (on_pause is not None and 0 < self.cfg.pause_frames < self.cfg.end_frames
+                    and silence_run == self.cfg.pause_frames):
+                on_pause(np.concatenate(collected))
 
             if silence_run >= self.cfg.end_frames or len(collected) >= max_blocks:
                 audio = np.concatenate(collected)

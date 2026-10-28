@@ -16,6 +16,7 @@ from typing import Iterator
 
 import numpy as np
 
+from . import net
 from .config import TTSConfig
 
 log = logging.getLogger(__name__)
@@ -32,7 +33,7 @@ class Speech:
         elif cfg.backend == "openai":
             from openai import OpenAI
             # Fail fast so the local fallback kicks in while the guest is still there.
-            self._client = OpenAI(timeout=10.0, max_retries=0)
+            self._client = OpenAI(timeout=10.0, max_retries=0, **net.openai_kwargs())
         elif cfg.backend == "piper":
             if not os.path.exists(cfg.piper_model):
                 raise FileNotFoundError(f"Piper model not found: {cfg.piper_model}")
@@ -42,6 +43,32 @@ class Speech:
         # stream() plays one from here, once, instead of calling the backend.
         self._cache: dict[str, list[bytes]] = {}
         self._cache_lock = threading.Lock()
+        # Short lines kept for the whole run and played any number of times
+        # (the "Hmm." fillers): text -> PCM chunks.
+        self._kept: dict[str, list[bytes]] = {}
+
+    def ping(self) -> None:
+        """Touch the speech server so the kept-open connection stays open."""
+        if self.cfg.backend == "openai":
+            self._client.models.list()
+
+    def keep(self, text: str) -> bool:
+        """Synthesize `text` once and keep it, so every stream(text) is instant.
+        Only the configured voice is kept, never the fallback."""
+        try:
+            chunks = list(self._primary(text))
+        except Exception as exc:
+            log.warning("VOICE could not prepare %r: %s", text, exc)
+            return False
+        if not chunks:
+            return False
+        with self._cache_lock:
+            self._kept[text] = chunks
+        return True
+
+    def is_kept(self, text: str) -> bool:
+        with self._cache_lock:
+            return text in self._kept
 
     def warm(self, text: str) -> bool:
         """Synthesize `text` now so a later stream(text) plays with no wait.
@@ -71,6 +98,8 @@ class Speech:
     def stream(self, text: str) -> Iterator[bytes]:
         with self._cache_lock:
             cached = self._cache.pop(text, None)
+            if cached is None:
+                cached = self._kept.get(text)
         if cached is not None:
             log.info("VOICE TTS cached (%d ms of audio, no wait): %r",
                      sum(len(c) for c in cached) * 500 // self.sample_rate, text)
