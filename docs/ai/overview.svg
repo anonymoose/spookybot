@@ -1,0 +1,123 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" width="1000" height="560" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>Where Bones's AI runs: the prop, the mini server, and Anthropic's cloud</title>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#444"/>
+    </marker>
+    <marker id="arrowO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#e85d04"/>
+    </marker>
+  </defs>
+
+  <rect width="1000" height="560" fill="#ffffff"/>
+
+  <!-- house boundary -->
+  <rect x="16" y="56" width="640" height="440" rx="18" fill="#fff8f0" stroke="#e8a46a" stroke-width="2" stroke-dasharray="8 6"/>
+  <text x="36" y="84" font-size="15" font-weight="700" fill="#b85a10">IN THE HOUSE (your network)</text>
+  <text x="980" y="84" font-size="15" font-weight="700" fill="#2f5fa8" text-anchor="end">ON THE INTERNET</text>
+
+  <text x="500" y="34" font-size="22" font-weight="700" fill="#1c1c1c" text-anchor="middle">Where Bones's AI runs</text>
+
+  <!-- ===== The prop: Raspberry Pi 5 ===== -->
+  <rect x="36" y="104" width="270" height="372" rx="14" fill="#ffffff" stroke="#1c1c1c" stroke-width="2"/>
+  <text x="171" y="132" font-size="17" font-weight="700" text-anchor="middle" fill="#1c1c1c">The prop</text>
+  <text x="171" y="152" font-size="13" text-anchor="middle" fill="#555">Raspberry Pi 5 on the wall</text>
+
+  <!-- skull icon -->
+  <g transform="translate(171 196)">
+    <path d="M0 -30 C-23 -30 -33 -12 -31 5 C-30 15 -24 21 -21 24 L-19 34 L19 34 L21 24 C24 21 30 15 31 5 C33 -12 23 -30 0 -30Z" fill="#fff" stroke="#1c1c1c" stroke-width="2.5"/>
+    <ellipse cx="-12" cy="3" rx="7.5" ry="9" fill="#1c1c1c"/>
+    <ellipse cx="12" cy="3" rx="7.5" ry="9" fill="#1c1c1c"/>
+    <circle cx="-11" cy="2" r="2.2" fill="#ff8a1c"/><circle cx="13" cy="2" r="2.2" fill="#ff8a1c"/>
+    <path d="M-3 18 L0 11 L3 18Z" fill="#1c1c1c"/>
+    <path d="M-12 26 V34 M-6 26 V34 M0 26 V34 M6 26 V34 M12 26 V34" stroke="#1c1c1c" stroke-width="2"/>
+  </g>
+  <text x="171" y="252" font-size="12" text-anchor="middle" fill="#555">jaw + eyes + head move</text>
+
+  <!-- prop parts list -->
+  <g font-size="13" fill="#1c1c1c">
+    <!-- camera -->
+    <g transform="translate(56 272)">
+      <rect width="230" height="54" rx="9" fill="#eaf6e4" stroke="#2f8f1a"/>
+      <rect x="10" y="15" width="30" height="22" rx="4" fill="#2f8f1a"/><circle cx="25" cy="26" r="7" fill="#eaf6e4"/><circle cx="25" cy="26" r="3.5" fill="#2f8f1a"/>
+      <text x="50" y="22" font-weight="700">Camera + AI HAT</text>
+      <text x="50" y="40" font-size="12" fill="#333">person detector (YOLOv8)</text>
+      <text x="222" y="22" font-size="11" fill="#2f8f1a" text-anchor="end" font-weight="700">AI</text>
+    </g>
+    <!-- mic -->
+    <g transform="translate(56 334)">
+      <rect width="230" height="54" rx="9" fill="#f3f3f3" stroke="#888"/>
+      <rect x="18" y="12" width="14" height="22" rx="7" fill="#555"/><path d="M13 26 Q25 42 37 26 M25 36 V42" stroke="#555" stroke-width="2.5" fill="none"/>
+      <text x="50" y="22" font-weight="700">Microphone</text>
+      <text x="50" y="40" font-size="12" fill="#333">"is someone talking?" filter</text>
+    </g>
+    <!-- speaker -->
+    <g transform="translate(56 396)">
+      <rect width="230" height="54" rx="9" fill="#f3f3f3" stroke="#888"/>
+      <path d="M14 21 H22 L32 13 V41 L22 33 H14Z" fill="#555"/><path d="M36 19 Q42 27 36 35" stroke="#555" stroke-width="2.5" fill="none"/>
+      <text x="50" y="22" font-weight="700">Speaker</text>
+      <text x="50" y="40" font-size="12" fill="#333">plays the voice, drives the jaw</text>
+    </g>
+  </g>
+
+  <!-- ===== mini: home server ===== -->
+  <rect x="404" y="164" width="232" height="252" rx="14" fill="#ffffff" stroke="#1c1c1c" stroke-width="2"/>
+  <text x="520" y="192" font-size="17" font-weight="700" text-anchor="middle" fill="#1c1c1c">"mini"</text>
+  <text x="520" y="212" font-size="13" text-anchor="middle" fill="#555">home server in the house</text>
+  <g transform="translate(420 228)">
+    <rect width="200" height="76" rx="9" fill="#eaf1fb" stroke="#2f5fa8"/>
+    <!-- ear -->
+    <path d="M22 50 C10 40 12 18 28 14 C44 10 52 26 44 36 C40 41 36 42 36 50 C36 58 26 60 22 50Z" fill="none" stroke="#2f5fa8" stroke-width="3"/>
+    <text x="62" y="28" font-size="14" font-weight="700" fill="#1c1c1c">Whisper</text>
+    <text x="62" y="46" font-size="12" fill="#333">speech → text</text>
+    <text x="62" y="64" font-size="11" fill="#555">"the ears"</text>
+    <text x="192" y="20" font-size="11" fill="#2f5fa8" text-anchor="end" font-weight="700">AI</text>
+  </g>
+  <g transform="translate(420 318)">
+    <rect width="200" height="76" rx="9" fill="#eaf1fb" stroke="#2f5fa8"/>
+    <!-- mouth / sound waves -->
+    <path d="M14 30 Q30 20 46 30 Q30 52 14 30Z" fill="#2f5fa8"/>
+    <path d="M14 30 Q30 36 46 30" stroke="#eaf1fb" stroke-width="2" fill="none"/>
+    <text x="62" y="28" font-size="14" font-weight="700" fill="#1c1c1c">Kokoro</text>
+    <text x="62" y="46" font-size="12" fill="#333">text → voice</text>
+    <text x="62" y="64" font-size="11" fill="#555">"the mouth"</text>
+    <text x="192" y="20" font-size="11" fill="#2f5fa8" text-anchor="end" font-weight="700">AI</text>
+  </g>
+
+  <!-- ===== Anthropic cloud ===== -->
+  <g transform="translate(694 150)">
+    <path d="M40 150 C0 150 0 96 38 92 C34 52 82 34 104 64 C116 22 196 22 204 74 C250 70 266 126 230 150 Z" fill="#fdf1e8" stroke="#1c1c1c" stroke-width="2"/>
+    <text x="134" y="98" font-size="17" font-weight="700" text-anchor="middle" fill="#1c1c1c">Anthropic</text>
+    <text x="134" y="118" font-size="14" font-weight="700" text-anchor="middle" fill="#e85d04">Claude</text>
+    <text x="134" y="138" font-size="12" text-anchor="middle" fill="#333">"the brain"</text>
+    <text x="214" y="58" font-size="11" fill="#e85d04" font-weight="700">AI</text>
+  </g>
+  <g transform="translate(724 324)">
+    <rect width="216" height="62" rx="9" fill="#ffffff" stroke="#888" stroke-dasharray="5 4"/>
+    <circle cx="26" cy="26" r="10" fill="none" stroke="#555" stroke-width="3"/><path d="M33 33 L42 42" stroke="#555" stroke-width="3.5" stroke-linecap="round"/>
+    <text x="54" y="26" font-size="13" font-weight="700" fill="#1c1c1c">Web search</text>
+    <text x="54" y="44" font-size="12" fill="#333">Claude looks things up,</text>
+    <text x="54" y="58" font-size="12" fill="#333">rarely (news, weather)</text>
+  </g>
+  <path d="M832 302 V322" stroke="#888" stroke-width="2" marker-end="url(#arrow)"/>
+
+  <!-- ===== arrows ===== -->
+  <g font-size="12" fill="#1c1c1c">
+    <!-- Pi -> mini: audio clip -->
+    <path d="M288 360 C344 360 364 268 418 268" stroke="#444" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <text x="312" y="226" font-size="11.5" font-weight="700">① speech clip</text><text x="312" y="242" font-size="11.5" font-weight="700">⑤ reply text</text>
+    <!-- mini -> Pi: words / voice audio -->
+    <path d="M418 356 C364 356 344 424 288 424" stroke="#444" stroke-width="2" fill="none" marker-end="url(#arrow)"/>
+    <text x="312" y="446" font-size="11.5" font-weight="700">② words heard</text><text x="312" y="462" font-size="11.5" font-weight="700">⑥ voice audio</text>
+
+    <!-- Pi <-> Claude, routed above mini -->
+    <path d="M306 150 C400 112 620 104 724 170" stroke="#e85d04" stroke-width="2.5" fill="none" marker-end="url(#arrowO)"/>
+    <text x="470" y="108" font-weight="700" fill="#b85a10">③ the words + a still photo</text>
+    <path d="M730 286 C700 330 600 500 310 470" stroke="#e85d04" stroke-width="2.5" fill="none" stroke-dasharray="7 5" marker-end="url(#arrowO)"/>
+    <text x="664" y="488" font-weight="700" fill="#b85a10">④ Bones's reply (text)</text>
+  </g>
+
+  <!-- legend / footer -->
+  <text x="500" y="524" font-size="13" text-anchor="middle" fill="#333">Sound never leaves the house: listening and speaking happen on <tspan font-weight="700">mini</tspan>.</text>
+  <text x="500" y="544" font-size="13" text-anchor="middle" fill="#333">Only the guest's <tspan font-weight="700">words</tspan> and one small <tspan font-weight="700">photo</tspan> per reply go to Anthropic. Video stays on the prop.</text>
+</svg>

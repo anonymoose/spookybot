@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" width="1000" height="520" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>What the camera and AI HAT see: boxes around people, and which ones count</title>
+  <rect width="1000" height="520" fill="#ffffff"/>
+  <text x="500" y="34" font-size="22" font-weight="700" text-anchor="middle" fill="#1c1c1c">What the camera + AI HAT "see"</text>
+  <text x="500" y="58" font-size="14" text-anchor="middle" fill="#555">15 times a second, the AI HAT draws a box around every person in view and says how sure it is</text>
+
+  <!-- camera frame (16:9) -->
+  <g transform="translate(40 80)">
+    <rect width="640" height="360" rx="6" fill="#eef1f5" stroke="#1c1c1c" stroke-width="2"/>
+    <!-- room: floor, back wall, doorway, window, table -->
+    <rect x="0" y="250" width="640" height="110" fill="#e2ddd3"/>
+    <rect x="452" y="70" width="110" height="180" fill="#d6dbe3" stroke="#b8bfca"/>
+    <rect x="70" y="60" width="140" height="90" fill="#dfe8f2" stroke="#b8bfca"/>
+    <path d="M140 60 V150 M70 105 H210" stroke="#b8bfca"/>
+    <rect x="40" y="232" width="150" height="14" fill="#c7b9a3"/>
+    <path d="M52 246 V300 M178 246 V300" stroke="#c7b9a3" stroke-width="6"/>
+    <!-- pumpkin on table -->
+    <ellipse cx="115" cy="220" rx="18" ry="13" fill="#ff8a1c"/><path d="M115 206 V200" stroke="#3a7d1e" stroke-width="4"/>
+
+    <!-- guest 1: close, witch hat (counts) -->
+    <g transform="translate(300 90)">
+      <path d="M-34 4 L0 -66 L30 4Z" fill="#3b3b3b"/>
+      <ellipse cx="-2" cy="4" rx="54" ry="9" fill="#3b3b3b"/>
+      <circle cx="0" cy="34" r="27" fill="#f2c9a5"/>
+      <path d="M-56 270 L-44 92 Q0 64 44 92 L56 270Z" fill="#5a3a7a"/>
+      <path d="M-44 96 L-78 190 M44 96 L78 190" stroke="#5a3a7a" stroke-width="22" stroke-linecap="round"/>
+    </g>
+    <rect x="204" y="18" width="196" height="342" fill="none" stroke="#2f8f1a" stroke-width="4"/>
+    <rect x="204" y="-6" width="128" height="24" fill="#2f8f1a"/>
+    <text x="212" y="12" font-size="15" font-weight="700" fill="#fff">person 94%</text>
+
+    <!-- guest 2: far away by doorway (too small) -->
+    <g transform="translate(507 132)">
+      <circle cx="0" cy="12" r="11" fill="#c99a76"/>
+      <path d="M-18 112 L-14 30 Q0 22 14 30 L18 112Z" fill="#7a8c5a"/>
+    </g>
+    <rect x="482" y="96" width="50" height="152" fill="none" stroke="#888" stroke-width="2.5" stroke-dasharray="6 4"/>
+    <rect x="482" y="74" width="92" height="22" fill="#888"/>
+    <text x="488" y="90" font-size="13" font-weight="700" fill="#fff">person 81%</text>
+
+    <!-- black cat (not a person) -->
+    <g transform="translate(590 318)">
+      <ellipse cx="0" cy="0" rx="26" ry="15" fill="#2a2a2a"/>
+      <circle cx="24" cy="-14" r="11" fill="#2a2a2a"/>
+      <path d="M17 -22 L19 -32 L25 -24 M27 -24 L33 -32 L33 -21" fill="#2a2a2a"/>
+      <path d="M-24 -2 Q-44 -20 -34 -34" stroke="#2a2a2a" stroke-width="5" fill="none" stroke-linecap="round"/>
+      <circle cx="22" cy="-15" r="2" fill="#ffd166"/><circle cx="29" cy="-15" r="2" fill="#ffd166"/>
+    </g>
+
+    <!-- centre crosshair of tracked guest -->
+    <path d="M302 178 h-12 m12 0 h12 m-12 0 v-12 m0 12 v12" stroke="#2f8f1a" stroke-width="3"/>
+
+    <!-- height ruler for the close guest -->
+    <path d="M-14 18 V360" stroke="#2f8f1a" stroke-width="2"/>
+    <path d="M-20 18 H-8 M-20 360 H-8" stroke="#2f8f1a" stroke-width="2"/>
+  </g>
+  <text x="18" y="270" font-size="12" fill="#2f8f1a" font-weight="700" transform="rotate(-90 18 270)" text-anchor="middle">box = 95% of frame height</text>
+
+  <!-- annotations -->
+  <g font-size="14" fill="#1c1c1c">
+    <g transform="translate(712 96)">
+      <rect width="272" height="112" rx="10" fill="#eaf6e4" stroke="#2f8f1a" stroke-width="2"/>
+      <text x="14" y="26" font-weight="700" fill="#2f8f1a">✓ Counts as a guest</text>
+      <text x="14" y="50">Sure enough (over 45%) and</text>
+      <text x="14" y="70">close enough (box taller than</text>
+      <text x="14" y="90">30% of the picture).</text>
+    </g>
+    <g transform="translate(712 222)">
+      <rect width="272" height="92" rx="10" fill="#f3f3f3" stroke="#888" stroke-width="2"/>
+      <text x="14" y="26" font-weight="700" fill="#555">✗ Ignored: too far away</text>
+      <text x="14" y="50">A person, but the box is small,</text>
+      <text x="14" y="70">so they're across the room.</text>
+    </g>
+    <g transform="translate(712 328)">
+      <rect width="272" height="72" rx="10" fill="#f3f3f3" stroke="#888" stroke-width="2"/>
+      <text x="14" y="26" font-weight="700" fill="#555">✗ Ignored: not a person</text>
+      <text x="14" y="50">Only "person" is used. No box.</text>
+    </g>
+  </g>
+
+  <g font-size="14" fill="#1c1c1c">
+    <text x="360" y="472" text-anchor="middle"><tspan fill="#2f8f1a" font-weight="700">✚ centre of the box</tspan> → the head turns to face that spot</text>
+    <text x="500" y="500" text-anchor="middle" fill="#555">Video stays on the prop. Only the boxes are used, plus one small still photo per reply that goes to Claude.</text>
+  </g>
+</svg>
