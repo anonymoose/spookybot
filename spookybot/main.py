@@ -205,6 +205,13 @@ class SpookyBot:
             return True
 
         log.info("VOICE HEARD: %s", text)
+        if (self.cfg.quiet_phrase
+                and strip_wake_phrase(text, self.cfg.quiet_phrase) is not None):
+            # The off-switch for a chat that has gone on too long. Returning
+            # False sends run() back to IDLE, which waits for the wake phrase.
+            log.info("VOICE QUIET %r: ending the conversation", self.cfg.quiet_phrase)
+            self.say(iter(["As you wish."]))
+            return False
         # A fresh still with every turn, so "what do you think of my costume?"
         # works at any point in the chat, not just the first reply. The brain
         # keeps only the newest image in context, so this costs one image per

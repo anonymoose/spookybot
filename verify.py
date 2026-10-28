@@ -685,6 +685,48 @@ def test_eye_modes():
         bot.shutdown()
 
 
+def test_quiet_phrase():
+    print("\nquiet phrase (\"quiet bones\")")
+    from spookybot.wake import strip_wake_phrase as w
+    check("matches", w("Quiet Bones!", "quiet bones") == "")
+    check("matches a common mishearing", w("quite bones, enough", "quiet bones") == "enough")
+    check("doesn't match 'quiet' alone", w("it's quiet in here", "quiet bones") is None)
+
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    CONFIG.listen_timeout_s = 1.0
+    CONFIG.quiet_phrase = "quiet bones"
+    from spookybot.main import SpookyBot
+    bot = SpookyBot(CONFIG)
+    try:
+        spoken, heard = [], []
+        real_say, real_respond = bot.say, bot.brain.respond
+        bot.say = lambda s: (spoken.extend(list(s)), real_say(iter([])))[0]
+        bot.brain.respond = lambda text, image_jpeg=None, scene_note=None: (
+            heard.append(text), real_respond(text, image_jpeg=image_jpeg,
+                                             scene_note=scene_note))[1]
+        audio = np.zeros(1600, dtype=np.int16)
+
+        bot.stt.transcribe = lambda a: "Quiet Bones, you talk too much"
+        check("quiet phrase ends the conversation", bot.converse_turn(audio=audio) is False)
+        check("he says As you wish", spoken == ["As you wish."], f"{spoken}")
+        check("and does not ask Claude anything", heard == [])
+
+        spoken.clear()
+        bot.stt.transcribe = lambda a: "what are you supposed to be"
+        check("normal speech carries on", bot.converse_turn(audio=audio) is True)
+        check("and is answered", len(heard) == 1 and len(spoken) > 0)
+
+        CONFIG.quiet_phrase = ""
+        spoken.clear(); heard.clear()
+        bot.stt.transcribe = lambda a: "quiet bones"
+        check("empty setting turns it off", bot.converse_turn(audio=audio) is True
+              and heard == ["quiet bones"])
+    finally:
+        CONFIG.quiet_phrase = "quiet bones"
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -721,7 +763,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

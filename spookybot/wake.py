@@ -6,6 +6,7 @@ import re
 
 # Whisper's usual mishearings, per word of the phrase.
 _ALIASES = {
+    "quiet": ("quiet", "quite"),
     "hello": ("hello", "hallo", "hullo", "hell o"),
     "hey": ("hey", "hay", "hi", "ay", "a"),
     "bones": ("bones", "bone", "boans"),
