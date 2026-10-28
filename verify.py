@@ -87,21 +87,38 @@ sys.modules["webrtcvad"] = vadmod
 # anthropic
 anth = types.ModuleType("anthropic")
 class _Stream:
-    def __init__(self, chunks): self.chunks = chunks
+    """Stands in for the SDK's stream: yields events like the real one (text
+    events, and a content_block_start for a server-side web search)."""
+    def __init__(self, script, stop_reason="end_turn"):
+        self.script, self.stop_reason = script, stop_reason
     def __enter__(self): return self
     def __exit__(self, *a): return False
-    @property
-    def text_stream(self):
-        for c in self.chunks:
-            yield c
+    def __iter__(self):
+        for item in self.script:
+            if item in ("<search>", "<code>"):
+                block = types.SimpleNamespace(
+                    type="server_tool_use",
+                    name="web_search" if item == "<search>" else "code_execution")
+                yield types.SimpleNamespace(type="content_block_start",
+                                            content_block=block)
+            else:
+                yield types.SimpleNamespace(type="text", text=item)
     def get_final_message(self):
         usage = types.SimpleNamespace(input_tokens=900, output_tokens=40,
                                       cache_creation_input_tokens=0,
                                       cache_read_input_tokens=0)
-        return types.SimpleNamespace(usage=usage, stop_reason="end_turn")
+        return types.SimpleNamespace(usage=usage, stop_reason=self.stop_reason,
+                                     content=[types.SimpleNamespace(type="text")])
 class _Messages:
+    # Tests can queue (script, stop_reason) turns here; each stream() takes one.
+    queued = []
+    calls = []
     def stream(self, **kw):
         _Messages.last_kwargs = kw
+        _Messages.calls.append(kw)
+        if _Messages.queued:
+            script, stop = _Messages.queued.pop(0)
+            return _Stream(script, stop)
         return _Stream(["Well ", "well. ", "A pirate, ", "is it? ",
                         "Bold ", "choice."])
 class _Anthropic:
@@ -796,6 +813,101 @@ def test_liveview():
         logging.getLogger().removeHandler(server.log_buffer)
 
 
+def test_web_search():
+    print("\nweb search (Anthropic server-side tool)")
+    from spookybot.config import BrainConfig
+    from spookybot.brain import Brain
+    M = sys.modules["anthropic"].Anthropic().messages.__class__
+
+    cfg = BrainConfig()
+    check("on by default", cfg.web_search is True)
+    brain = Brain(cfg)
+    M.calls.clear()
+    list(brain.respond("who won the game?"))
+    kw = M.calls[-1]
+    tool = (kw.get("tools") or [{}])[0]
+    check("web_search tool declared on the request",
+          tool.get("type") == "web_search_20250305" and tool.get("name") == "web_search",
+          f"{tool}")
+    check("limited to one search per reply", tool.get("max_uses") == 1)
+    check("reply budget raised so queries fit", kw["max_tokens"] >= 400,
+          f"{kw['max_tokens']}")
+    check("no blocked domains unless configured", "blocked_domains" not in tool)
+
+    cfg2 = BrainConfig()
+    cfg2.web_blocked_domains = "bad.example, worse.example ,"
+    t2 = Brain(cfg2)._tools()[0]
+    check("blocked domains passed through, trimmed",
+          t2.get("blocked_domains") == ["bad.example", "worse.example"], f"{t2}")
+
+    off = BrainConfig()
+    off.web_search = False
+    M.calls.clear()
+    list(Brain(off).respond("hi"))
+    check("off -> no tools at all and the old token budget",
+          "tools" not in M.calls[-1] and M.calls[-1]["max_tokens"] == off.max_tokens)
+
+    # A search mid-answer: he speaks first, goes quiet, then answers.
+    waits = []
+    brain = Brain(BrainConfig())
+    brain.on_wait = waits.append
+    M.queued.append((["Let me check.", "<search>", "The Heat won, ", "110 to 98."], "end_turn"))
+    said = list(brain.respond("who won the game?"))
+    check("sentences before and after the search are all spoken",
+          said == ["Let me check.", "The Heat won, 110 to 98."], f"{said}")
+    check("wait signalled on search start and cleared when talking resumes",
+          waits == [True, False], f"{waits}")
+    check("history keeps only the spoken text",
+          brain.conversation.messages[-1]["content"] == "Let me check. The Heat won, 110 to 98.")
+    check("search counted", brain.searches == 1)
+
+    # hidden code-execution steps are not searches and must not stall the eyes
+    waits.clear()
+    brain = Brain(BrainConfig())
+    brain.on_wait = waits.append
+    M.queued.append((["<code>", "Done."], "end_turn"))
+    list(brain.respond("x"))
+    check("a code-execution step is not counted as a search",
+          brain.searches == 0 and waits == [], f"{brain.searches} {waits}")
+
+    # pause_turn: the reply is resumed instead of cut off
+    M.calls.clear()
+    brain = Brain(BrainConfig())
+    M.queued.append((["Checking. ", "<search>"], "pause_turn"))
+    M.queued.append((["It is sunny."], "end_turn"))
+    said = list(brain.respond("weather?"))
+    check("pause_turn is resumed", said == ["Checking.", "It is sunny."], f"{said}")
+    check("resume resends the partial answer",
+          len(M.calls) == 2 and M.calls[1]["messages"][-1]["role"] == "assistant")
+
+    # never loops forever
+    M.calls.clear()
+    brain = Brain(BrainConfig())
+    for _ in range(6):
+        M.queued.append((["Hmm. "], "pause_turn"))
+    list(brain.respond("endless"))
+    check("gives up after a few resumes", len(M.calls) == 3, f"{len(M.calls)} calls")
+    M.queued.clear()
+
+    # eyes: flicker during the search wait, steady again once speaking
+    from spookybot.config import CONFIG
+    CONFIG.vision.enabled = False
+    from spookybot.main import SpookyBot
+    bot = SpookyBot(CONFIG)
+    try:
+        bot._voice_started = True
+        bot.brain.on_wait(True)
+        check("eyes flicker while searching", bot.servos.eye_mode == "flicker")
+        bot.brain.on_wait(False)
+        check("eyes steady once he talks again", bot.servos.eye_mode == "steady")
+        bot._voice_started = False
+        bot.servos.set_eye_mode("flicker")
+        bot.brain.on_wait(False)
+        check("but not before any voice has started", bot.servos.eye_mode == "flicker")
+    finally:
+        bot.shutdown()
+
+
 def test_mic_gating():
     print("\nhalf-duplex mic gating")
     from spookybot.config import CONFIG
@@ -832,7 +944,7 @@ def main():
                test_eye_fade, test_chat_cost, test_jaw_envelope, test_vad_state_machine,
                test_sentence_chunking, test_image_and_trim,
                test_vision_box_parsing, test_speaker_playback,
-               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_mic_gating,
+               test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_mic_gating,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

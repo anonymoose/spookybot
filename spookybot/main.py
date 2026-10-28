@@ -82,6 +82,10 @@ class SpookyBot:
 
         log.info("Initializing brain…")
         self.brain = Brain(cfg.brain)
+        # While Claude searches the web the voice goes quiet: flicker the eyes
+        # (it is waiting on Anthropic), and go steady again once it talks.
+        self._voice_started = False
+        self.brain.on_wait = self._on_brain_wait
         self.stt = Transcriber(cfg.stt, cfg.audio.sample_rate)
         self.tts = Speech(cfg.tts, cfg.audio.playback_rate)
 
@@ -109,6 +113,7 @@ class SpookyBot:
     def say(self, sentences) -> bool:
         """Speak an iterable of sentences, streaming each through TTS."""
         self.state = "SPEAK"
+        self._voice_started = False
         self.speaker.start()
 
         if self.cfg.audio.mute_mic_while_speaking:
@@ -123,6 +128,7 @@ class SpookyBot:
                 for chunk in self.tts.stream(sentence):
                     self.speaker.feed(chunk)
                     if not spoke_anything:
+                        self._voice_started = True
                         self.servos.set_eye_mode("steady")
                     spoke_anything = True
         finally:
@@ -312,6 +318,12 @@ class SpookyBot:
         servos = getattr(self, "servos", None)
         if servos is not None:
             servos.set_eye_mode(self._EYES.get(value, "pulse"))
+
+    def _on_brain_wait(self, waiting: bool) -> None:
+        if waiting:
+            self.servos.set_eye_mode("flicker")
+        elif self._voice_started:
+            self.servos.set_eye_mode("steady")
 
     def announce_ready(self) -> None:
         """Say hello and the time once everything is up, so whoever restarted the

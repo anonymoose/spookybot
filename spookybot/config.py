@@ -139,6 +139,20 @@ class BrainConfig:
     thinking: str = _env("SB_THINKING", "between_tools")
     effort: str = _env("SB_EFFORT", "low")
     max_tokens: int = _envi("SB_MAX_TOKENS", 160)   # short answers = low latency
+    # Anthropic's server-side web search: Claude looks things up itself, the Pi
+    # needs nothing beyond its normal connection. Needs web search allowed in the
+    # org's Console settings. Costs a per-search fee and a few seconds per search.
+    web_search: bool = _envb("SB_WEB_SEARCH", True)
+    web_search_max_uses: int = _envi("SB_WEB_SEARCH_MAX_USES", 1)   # per reply
+    # The basic tool. web_search_20260209 filters results by running code behind
+    # the scenes: slower, ~4x the input tokens, and Claude narrates the hidden
+    # step out loud ("let me look at the result shape"), which is wrong for a
+    # talking head.
+    web_search_tool: str = _env("SB_WEB_SEARCH_TOOL", "web_search_20250305")
+    # Search queries and results count against the reply's output budget.
+    web_max_tokens: int = _envi("SB_WEB_MAX_TOKENS", 400)
+    # Comma-separated domains the search must never use.
+    web_blocked_domains: str = _env("SB_WEB_BLOCKED_DOMAINS", "")
     history_turns: int = _envi("SB_HISTORY_TURNS", 8)
     # How long a conversation stays "warm" before the head forgets this guest.
     conversation_timeout_s: float = _envf("SB_CONVO_TIMEOUT_S", 45.0)
