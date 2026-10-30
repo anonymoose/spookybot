@@ -1471,6 +1471,125 @@ def test_persona_reload():
     check("an unknown VERSION stops before copying anything", rc != 0)
 
 
+def test_empty_frame_and_lonely():
+    print("\nnobody in frame ends the chat; lonely remarks")
+    import spookybot.main as main_mod
+    from spookybot.config import CONFIG, VisionConfig
+    from spookybot.vision import Vision
+    from spookybot.vad import UtteranceDetector
+
+    # the camera notices anyone at all, near or far
+    vcfg = VisionConfig(); vcfg.enabled = False
+    v = Vision(vcfg)
+    empty = [np.zeros((0, 5)) for _ in range(80)]
+    far = list(empty); far[0] = np.array([[0.45, 0.10, 0.55, 0.15, 0.8]])   # small box
+    v._process(far)
+    g = v.snapshot()
+    check("someone far away counts as 'in frame' but not as a guest",
+          g.anyone_seen > 0 and not g.present and g.last_seen == 0)
+    v.guest.anyone_seen = 0
+    unsure = list(empty); unsure[0] = np.array([[0.2, 0.4, 0.9, 0.6, 0.2]])  # low score
+    v._process(unsure)
+    check("a low-confidence box doesn't", v.snapshot().anyone_seen == 0)
+
+    # the detector can be told to give up waiting
+    block = int(CONFIG.audio.sample_rate * CONFIG.audio.block_ms / 1000)
+    class QuietMic:
+        def read(self, timeout=0.5):
+            return (np.random.randn(block) * 20).astype(np.int16)
+    det = UtteranceDetector(CONFIG.vad, CONFIG.audio.sample_rate, CONFIG.audio.block_ms)
+    ticks = []
+    t0 = time.monotonic()
+    out = det.capture(QuietMic(), timeout_s=30.0,
+                      should_stop=lambda: (ticks.append(1), len(ticks) > 5)[1])
+    check("should_stop ends the wait early", out is None and time.monotonic() - t0 < 5)
+
+    CONFIG.vision.enabled = False
+    CONFIG.listen_timeout_s = 1.0
+    bot = main_mod.SpookyBot(CONFIG)
+    try:
+        listened = []
+        bot.detector.capture = lambda *a, **k: (listened.append(k), None)[1]
+        bot.vision.detecting = True
+        now = time.monotonic()
+        bot._session_start = now - 30
+        bot.vision.guest.anyone_seen = now - 11
+        check("nobody in frame for 10 s -> the conversation ends without listening",
+              bot.converse_turn() is False and listened == [])
+        bot.vision.guest.anyone_seen = now - 2
+        bot.converse_turn()
+        check("someone seen recently -> it listens, and can stop if they leave",
+              len(listened) == 1 and listened[0].get("should_stop") is not None)
+        bot.vision.guest.anyone_seen = 0
+        bot._session_start = time.monotonic() - 3
+        check("the 10 s count starts with the conversation (a guest out of shot at hello)",
+              not bot._nobody_here())
+        bot._session_start = time.monotonic() - 60
+        bot.vision.detecting = False
+        check("no person detector -> never assumes the room is empty", not bot._nobody_here())
+        bot.vision.detecting = True
+        CONFIG.empty_frame_end_s = 0
+        check("setting 0 -> off", not bot._nobody_here())
+        CONFIG.empty_frame_end_s = 10.0
+
+        bot.preloader = None
+        bot.say = lambda s: None
+        bot.converse_turn = lambda **kw: False
+        before = bot._last_session = time.monotonic() - 100
+        bot.introduce()
+        check("saying hello starts the clock for both", bot._last_session > before
+              and bot._session_start == bot._last_session)
+
+        # lonely remarks: only 6 pm to 1 am Eastern
+        from datetime import datetime
+        at = lambda h, m=0: datetime(2026, 10, 31, h, m)
+        check("lonely hours: 6 pm to 1 am, across midnight",
+              all(main_mod.within_hours("18-1", at(h)) for h in (18, 21, 23, 0))
+              and not any(main_mod.within_hours("18-1", at(h)) for h in (1, 2, 9, 12, 17)))
+        check("edges: 6:00 pm in, 12:59 am in, 1:00 am out",
+              main_mod.within_hours("18-1", at(18, 0)) and main_mod.within_hours("18-1", at(0, 59))
+              and not main_mod.within_hours("18-1", at(1, 0)))
+        check("a same-day window and a bad setting",
+              main_mod.within_hours("9-17", at(12)) and not main_mod.within_hours("9-17", at(18))
+              and main_mod.within_hours("nonsense", at(4)))
+        real_now = main_mod.eastern_now
+        main_mod.eastern_now = lambda: at(10)
+        bot._last_session = time.monotonic() - 99999
+        check("10 am -> no remark, however long it's been", bot.maybe_lonely() is False)
+        main_mod.eastern_now = lambda: at(20)
+        M = sys.modules["anthropic"].Anthropic().messages.__class__
+        said = []
+        bot.say = lambda s: said.extend(list(s))
+        bot._last_session = time.monotonic() - 60
+        check("not before 30 minutes", bot.maybe_lonely() is False and said == [])
+        topics = set()
+        for _ in range(30):
+            bot._last_session = time.monotonic() - 1801
+            M.create_queued.append("So lonely up here. Anyone?")
+            bot.maybe_lonely()
+            note = M.create_calls[-1]["messages"][0]["content"]
+            topics |= {t for t in main_mod.LONELY_TOPICS if t in note}
+        check("after 30 minutes it says a fresh line from Claude, out loud",
+              said[:2] == ["So lonely up here.", "Anyone?"], f"{said[:2]}")
+        check("topics picked at random from the three", topics == set(main_mod.LONELY_TOPICS),
+              f"{len(topics)} of 3")
+        check("asked for one short sentence", "ONE short sentence" in note and "15 words" in note)
+        said.clear()
+        check("then waits another 30 minutes", bot.maybe_lonely() is False and said == [])
+        bot._last_session = time.monotonic() - 1801
+        real_generate = bot.brain.generate
+        bot.brain.generate = lambda *a, **k: None
+        check("Claude unreachable -> says nothing", bot.maybe_lonely() is False and said == [])
+        bot.brain.generate = real_generate
+        CONFIG.lonely_after_s = 0
+        bot._last_session = time.monotonic() - 99999
+        check("setting 0 -> off", bot.maybe_lonely() is False)
+    finally:
+        main_mod.eastern_now = real_now
+        CONFIG.lonely_after_s = 1800.0
+        bot.shutdown()
+
+
 def main():
     print("=" * 60)
     print("spookybot headless verification")
@@ -1481,7 +1600,7 @@ def main():
                test_vision_box_parsing, test_speaker_playback,
                test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_preload, test_preload_in_the_bot, test_startup_sequence, test_mic_gating,
                test_early_transcript, test_fillers_goodbye_repeats, test_keep_warm,
-               test_persona_reload,
+               test_persona_reload, test_empty_frame_and_lonely,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

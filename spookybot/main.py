@@ -30,7 +30,7 @@ from zoneinfo import ZoneInfo
 
 from . import net
 from .audio_io import MicStream, Speaker
-from .brain import Brain
+from .brain import Brain, split_sentences
 from .config import CONFIG, Config
 from .preload import Preloader
 from .servos import ServoBus
@@ -69,6 +69,17 @@ GOODBYE_RE = re.compile(r"\b(?:good ?bye|bye|good ?night|see (?:you|ya)|gotta go
                         re.IGNORECASE)
 GOODBYE_NOTE = ("The guest is saying goodbye and leaving. Say goodbye in ONE "
                 "short sentence, in character.")
+
+# Said to the room after SB_LONELY_AFTER_S with no conversation, written fresh
+# each time (one topic picked at random) rather than prepared.
+LONELY_TOPICS = ("how lonely you are up on this wall",
+                 "how nobody is talking to you",
+                 "how you wish somebody would bring you a drink")
+LONELY_USER = "*nobody has talked to you for half an hour*"
+LONELY_NOTE = ("Nobody has talked to you for a long while. Say ONE short sentence, "
+               "under 15 words, out loud to whoever might be nearby, about {topic}. "
+               "Dry and funny, in character. It is spoken aloud, so no stage "
+               "directions, and leave your backstory out of it.")
 
 # Any request that mentions a joke gets a prepared one ("joke about cats" too).
 JOKE_RE = re.compile(r"\bjokes?\b", re.IGNORECASE)
@@ -145,9 +156,25 @@ def joke_request(avoid: list) -> tuple:
     return JOKE_USER, note
 
 
+def eastern_now() -> datetime:
+    return datetime.now(ZoneInfo("America/New_York"))
+
+
+def within_hours(hours: str, now: datetime) -> bool:
+    """Whether `now` falls in "START-END" (24-hour clock, END exclusive). A
+    window that wraps midnight ("18-1") works; a bad setting allows any time."""
+    try:
+        start, end = (int(h) % 24 for h in hours.split("-"))
+    except ValueError:
+        return True
+    if start <= end:
+        return start <= now.hour < end
+    return now.hour >= start or now.hour < end
+
+
 def spoken_time(now: datetime | None = None) -> str:
     """Eastern wall-clock time as a line for the speech synthesizer."""
-    now = now or datetime.now(ZoneInfo("America/New_York"))
+    now = now or eastern_now()
     return f"{now.hour % 12 or 12}:{now.minute:02d} {'AM' if now.hour < 12 else 'PM'}"
 
 
@@ -195,6 +222,9 @@ class SpookyBot:
             self.brain.on_persona_change = self.preloader.clear
 
         self._last_filler = None
+        # When the current conversation started, and when the last one did (or
+        # startup): the empty-frame check and the lonely timer count from these.
+        self._session_start = self._last_session = time.monotonic()
 
         self._idle_thread = threading.Thread(target=self._idle_motion, daemon=True)
         self._idle_thread.start()
@@ -254,6 +284,37 @@ class SpookyBot:
         self._last_filler = random.choice(ready)
         return self._last_filler
 
+    def _start_session(self) -> None:
+        self._session_start = self._last_session = time.monotonic()
+
+    def _nobody_here(self) -> bool:
+        """True once nobody at all has been in frame for SB_EMPTY_FRAME_END_S,
+        counted from the start of this conversation. Never true without a
+        working person detector: then nobody can be seen leaving."""
+        limit = self.cfg.empty_frame_end_s
+        if limit <= 0 or not self.vision.detecting:
+            return False
+        seen = max(self.vision.snapshot().anyone_seen, self._session_start)
+        return time.monotonic() - seen >= limit
+
+    def maybe_lonely(self) -> bool:
+        """Say one fresh line to the room if nobody has started a conversation
+        for SB_LONELY_AFTER_S, during SB_LONELY_HOURS (Eastern). Returns True
+        if it spoke."""
+        if (self.cfg.lonely_after_s <= 0
+                or time.monotonic() - self._last_session < self.cfg.lonely_after_s
+                or not within_hours(self.cfg.lonely_hours, eastern_now())):
+            return False
+        self._last_session = time.monotonic()      # at most once per period
+        topic = random.choice(LONELY_TOPICS)
+        text = self.brain.generate(LONELY_USER, LONELY_NOTE.format(topic=topic),
+                                   max_tokens=80)
+        if not text:
+            return False
+        log.info("VOICE lonely (%s): %s", topic, text)
+        self.say(iter(split_sentences(text)))
+        return True
+
     def _track_guest(self) -> None:
         guest = self.vision.snapshot()
         if guest.present:
@@ -296,6 +357,7 @@ class SpookyBot:
     def greet(self) -> None:
         self.state = "GREET"
         self._last_greet = time.monotonic()
+        self._start_session()
         self.brain.reset()
 
         image = None
@@ -341,14 +403,22 @@ class SpookyBot:
 
         early = None
         if audio is None:
+            if self._nobody_here():
+                log.info("VISION nobody in frame for %.0f s: ending the conversation",
+                         self.cfg.empty_frame_end_s)
+                return False
             early = self._early_transcript()
             audio = self.detector.capture(
                 self.mic,
                 timeout_s=self.cfg.listen_timeout_s,
                 on_speech_start=lambda: setattr(self, "state", "LISTEN"),
                 on_pause=early.on_pause,
+                should_stop=self._nobody_here,
             )
             if audio is None:
+                if self._nobody_here():
+                    log.info("VISION nobody in frame for %.0f s: ending the "
+                             "conversation", self.cfg.empty_frame_end_s)
                 return False
 
         self.state = "THINK"
@@ -452,6 +522,7 @@ class SpookyBot:
             return True
 
         self.brain.reset()
+        self._start_session()
         image = note = None
         if self.cfg.vision.costume_vision:
             image = self.vision.capture_jpeg()
@@ -470,6 +541,7 @@ class SpookyBot:
         """
         self.state = "GREET"
         self.brain.reset()
+        self._start_session()
         prepared = self.preloader.take("intro") if self.preloader else None
         if prepared:
             log.info("VOICE intro from the preloaded queue")
@@ -567,6 +639,7 @@ class SpookyBot:
                 if detecting:
                     if not self.vision.snapshot().present:
                         self.state = "IDLE"
+                        self.maybe_lonely()
                         time.sleep(0.2)
                         continue
 
@@ -578,6 +651,7 @@ class SpookyBot:
                         # ignored.
                         self.greet()
                 elif not self.start_by_voice():
+                    self.maybe_lonely()
                     continue
 
                 while self.running and self.converse_turn():

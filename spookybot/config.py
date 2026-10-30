@@ -234,6 +234,16 @@ class Config:
     # Claude has to answer, so the wait for the reply doesn't sound like silence.
     # Never the same one twice in a row. 0 = off.
     filler_chance: float = _envf("SB_FILLER_CHANCE", 0.7)
+    # End a conversation when nobody at all has been in frame this long
+    # (seconds), counted from when it started: they walked off. Needs the
+    # person detector; without it the head can't tell. 0 = off.
+    empty_frame_end_s: float = _envf("SB_EMPTY_FRAME_END_S", 10.0)
+    # After this long (seconds) with no conversation started, say one short
+    # line to the room: lonely, nobody's talking, someone bring a drink. 0 = off.
+    lonely_after_s: float = _envf("SB_LONELY_AFTER_S", 1800.0)
+    # Only between these Eastern-time hours ("18-1" = 6 pm to 1 am, across
+    # midnight), so it doesn't pipe up at breakfast.
+    lonely_hours: str = _env("SB_LONELY_HOURS", "18-1")
     # Ping Anthropic and the speech server this often (seconds) to keep their
     # connections open. On the Pi's lossy Wi-Fi a fresh connection costs ~6 s
     # (DNS and TCP retries); a kept-open one, ~0.3 s. 0 = off.

@@ -45,6 +45,9 @@ class Guest:
     center_y: float = 0.5
     box_height: float = 0.0
     last_seen: float = 0.0
+    # Last time anyone was in frame at all, near or far (detector sure enough,
+    # any size). last_seen only counts someone close enough to talk to.
+    anyone_seen: float = 0.0
 
 
 class Vision:
@@ -179,6 +182,8 @@ class Vision:
         self._frame_times.append(time.monotonic())
         with self._lock:
             self._dets = dets
+            if any(reason != "low" for *_, reason in dets):
+                self.guest.anyone_seen = time.monotonic()
         if people:
             # Track the nearest guest — largest box wins.
             people.sort(key=lambda p: p[2], reverse=True)
