@@ -251,6 +251,9 @@ class SpookyBot:
         last_claude = 0.0
         while self.running:
             time.sleep(net.SPEECH_PING_S)
+            # A stat() call: notices a swapped persona.md within seconds, even
+            # while nobody is talking (see Brain.persona).
+            self.brain.persona
             for name, ping in (("speech-to-text", self.stt.ping),
                                ("text-to-speech", self.tts.ping)):
                 try:

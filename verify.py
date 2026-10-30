@@ -1453,7 +1453,22 @@ def test_persona_reload():
               and (bot.brain.on_persona_change() or True)
               and all(n == 0 for n in bot.preloader.counts().values()), f"{bot.preloader.counts()}")
         check("and their voiced audio", not bot.tts.is_cached("Ken is at the gas station."))
+
+        # a swap noticed before any prepared answer is handed out
+        import tempfile
+        path = os.path.join(tempfile.mkdtemp(), "persona.md")
+        with open(path, "w") as fh:
+            fh.write("Old persona.")
+        real_persona_file = bot.brain.cfg.persona_file
+        bot.brain.cfg.persona_file = path
+        bot.brain.persona
+        q["joke"].append(["A joke from the old persona."])
+        with open(path, "w") as fh:
+            fh.write("A brand new persona, longer.")
+        check("a prepared answer from before a swap is never played",
+              bot.preloader.take("joke") is None and bot.preloader.counts()["joke"] == 0)
     finally:
+        bot.brain.cfg.persona_file = real_persona_file
         bot.shutdown()
     import subprocess
     def dry(*args):

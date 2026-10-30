@@ -42,6 +42,9 @@ class Preloader:
 
     def take(self, kind: str):
         """The next prepared reply as a list of sentences, or None if empty."""
+        # Look at persona.md first: if it was swapped, this clears the queues
+        # (via Brain.on_persona_change) and nothing from the old one is played.
+        self.brain.persona
         with self._lock:
             queue = self._queues.get(kind)
             if not queue:
