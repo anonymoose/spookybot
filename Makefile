@@ -6,7 +6,7 @@ RPI  ?= rpi
 RPI_DIR  ?= spookybot
 MINI_DIR ?= spookybot-speech
 
-.PHONY: all mini rpi verify status logs logs-mini say restart stop rpi-reboot
+.PHONY: all mini rpi persona verify status logs logs-mini say restart stop rpi-reboot
 
 all: mini rpi
 
@@ -19,6 +19,20 @@ rpi: verify
 	rsync -a --delete --exclude .git --exclude .venv --exclude __pycache__ \
 		./ $(RPI):$(RPI_DIR)/
 	ssh $(RPI) 'bash $(RPI_DIR)/deploy/rpi/setup.sh'
+
+# Swap Bones's personality mid-party, with no restart: copies one persona file
+# to persona.md on the Pi. The next reply uses it, and prepared answers are
+# rewritten in the background.
+#   make persona                 local persona.md
+#   make persona VERSION=adult   persona.adult.md (or pg13 -> persona.pg13.md)
+# `make rpi` copies the local persona.md again, so re-run this after a deploy.
+# -I --no-times: always copy, with a fresh timestamp, so the bot sees the change
+# even when two versions happen to be the same size.
+PERSONA_FILE = $(if $(VERSION),persona.$(VERSION).md,persona.md)
+persona:
+	@test -f $(PERSONA_FILE) || { echo "no $(PERSONA_FILE) here; have: $$(ls persona*.md | tr '\n' ' ')"; exit 1; }
+	rsync -I --no-times $(PERSONA_FILE) $(RPI):$(RPI_DIR)/persona.md
+	@echo "$(PERSONA_FILE) is now Bones's persona; used from the next reply (make logs tag=PERSONA)"
 
 # Uses the local uv venv (uv venv .venv && uv pip install -r requirements.txt,
 # minus the Pi-only adafruit-* servo libs) when there is one.

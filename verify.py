@@ -589,8 +589,8 @@ def test_wake_phrase():
         check("phrase starts a conversation", speak("Hello Bones, who are you?"))
         check("first thing said is the intro, not an answer",
               len(heard) == 1 and "says hello" in heard[0], f"{heard}")
-        check("intro asked for ~30 words and a fresh wording",
-              "30 words" in prompts[0] and "differently" in prompts[0])
+        check("intro asked for ~12 words and a fresh wording",
+              "12 words" in prompts[0] and "differently" in prompts[0])
         check("intro spoken", len(spoken) > 0)
         check("then it listens for the guest", len(calls) == 1)
 
@@ -1402,6 +1402,75 @@ def test_keep_warm():
     check("pings stop at shutdown", len(pings) == n)
 
 
+def test_persona_reload():
+    print("\npersona.md re-read when it changes (swap it mid-party)")
+    import os, tempfile
+    import spookybot.main as main_mod
+    from spookybot.config import CONFIG
+    from spookybot.brain import Brain, DEFAULT_PERSONA
+    M = sys.modules["anthropic"].Anthropic().messages.__class__
+
+    path = os.path.join(tempfile.mkdtemp(), "persona.md")
+    with open(path, "w") as fh:
+        fh.write("You are Bones, version one.")
+    saved = CONFIG.brain.persona_file
+    CONFIG.brain.persona_file = path
+    try:
+        brain = Brain(CONFIG.brain)
+        changes = []
+        brain.on_persona_change = lambda: changes.append(1)
+        list(brain.respond("hello"))
+        check("replies use persona.md", M.last_kwargs["system"] == "You are Bones, version one.")
+        with open(path, "w") as fh:
+            fh.write("You are Bones, version two, now a pirate.")
+        list(brain.respond("hello again"))
+        check("an edit is used from the next reply, no restart",
+              M.last_kwargs["system"] == "You are Bones, version two, now a pirate.")
+        brain.generate("Tell me a joke.", "joke")
+        check("prepared answers are written with it too",
+              M.create_calls[-1]["system"] == "You are Bones, version two, now a pirate.")
+        check("and the change is announced once", changes == [1], f"{changes}")
+        open(path, "w").close()
+        check("an empty file (mid-save) keeps the last good one",
+              brain.persona == "You are Bones, version two, now a pirate.")
+        os.remove(path)
+        check("a deleted file keeps the last good one",
+              brain.persona == "You are Bones, version two, now a pirate.")
+        CONFIG.brain.persona_file = path + ".missing"
+        check("no file at all from the start: the built-in default",
+              Brain(CONFIG.brain).persona == DEFAULT_PERSONA)
+    finally:
+        CONFIG.brain.persona_file = saved
+
+    CONFIG.vision.enabled = False
+    bot = main_mod.SpookyBot(CONFIG)
+    try:
+        q = bot.preloader._queues
+        q["ken"].append(["Ken is at the gas station."]); q["joke"].append(["Old joke."])
+        bot.tts.warm("Ken is at the gas station.")
+        check("a persona change empties the prepared answers",
+              bot.brain.on_persona_change is not None
+              and (bot.brain.on_persona_change() or True)
+              and all(n == 0 for n in bot.preloader.counts().values()), f"{bot.preloader.counts()}")
+        check("and their voiced audio", not bot.tts.is_cached("Ken is at the gas station."))
+    finally:
+        bot.shutdown()
+    import subprocess
+    def dry(*args):
+        r = subprocess.run(["make", "-n", "persona", *args], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+    rc, out = dry("VERSION=adult")
+    check("make persona VERSION=adult copies persona.adult.md to persona.md, no restart",
+          rc == 0 and "persona.adult.md" in out and ":spookybot/persona.md" in out
+          and "setup.sh" not in out and "restart" not in out, out.strip())
+    rc, out = dry()
+    check("no VERSION -> the local persona.md", rc == 0 and "rsync -I --no-times persona.md " in out, out.strip())
+    check("always copied with a fresh timestamp", "--no-times" in out and "-I" in out)
+    rc, out = subprocess.run(["make", "persona", "VERSION=nosuch", "RPI=invalid.invalid"],
+                             capture_output=True, text=True).returncode, ""
+    check("an unknown VERSION stops before copying anything", rc != 0)
+
+
 def main():
     print("=" * 60)
     print("spookybot headless verification")
@@ -1412,6 +1481,7 @@ def main():
                test_vision_box_parsing, test_speaker_playback,
                test_vision_degrades, test_wake_phrase, test_still_every_turn, test_startup_announcement, test_eye_modes, test_quiet_phrase, test_liveview, test_web_search, test_preload, test_preload_in_the_bot, test_startup_sequence, test_mic_gating,
                test_early_transcript, test_fillers_goodbye_repeats, test_keep_warm,
+               test_persona_reload,
                test_orchestrator, test_voice_arrival):
         try:
             fn()

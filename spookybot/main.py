@@ -74,16 +74,14 @@ GOODBYE_NOTE = ("The guest is saying goodbye and leaving. Say goodbye in ONE "
 JOKE_RE = re.compile(r"\bjokes?\b", re.IGNORECASE)
 
 INTRO_USER = "*a guest says hello to you*"
+# Kept short on purpose: guests who said hello want to talk, not listen. At
+# ~35 words the intros ran ~12 s; ~12 words is ~5 s.
 INTRO_NOTE = ("A guest just said your name to get your attention. Introduce "
-              "yourself in THREE short sentences, about 30 words in total "
-              "(roughly 10 seconds spoken): you are Bones, you have been "
-              "bolted to this wall since 1874, and you have opinions about "
-              "everyone who walks past. Then offer to judge their costume or "
-              "have a chat. Example: \"My name is Bones, and I have been "
-              "bolted to this wall since 1874. I have seen every costume "
-              "this house has to offer, and most of them were disappointing. "
-              "Would you like me to judge yours?\" Word it differently "
-              "every time.")
+              "yourself in TWO short sentences, about 12 words in total and "
+              "never more than 15 (roughly 4 seconds spoken): you are Bones, "
+              "bolted to this wall since 1874, and you offer to judge their "
+              "costume. Example: \"I'm Bones, bolted to this wall since 1874. "
+              "Shall I judge your costume?\" Word it differently every time.")
 JOKE_USER = "Tell me a joke."
 JOKE_NOTE = ("A guest asked for a joke. Tell ONE short, clean, PG-13 joke in "
              "your voice: exactly two sentences, a setup and a punchline, under "
@@ -192,6 +190,9 @@ class SpookyBot:
             self.preloader = Preloader(
                 self.brain, self.tts, targets, prompts,
                 idle=lambda: self.state in ("IDLE", "LISTEN"))
+            # Prepared answers carry the old persona's facts (where Ken is, the
+            # bathroom...), so a new persona.md replaces them all.
+            self.brain.on_persona_change = self.preloader.clear
 
         self._last_filler = None
 

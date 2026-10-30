@@ -108,7 +108,13 @@ class Brain:
 
         self.cfg = cfg
         self.client = Anthropic(**net.anthropic_kwargs())
-        self.persona = self._load_persona()
+        # persona.md is re-read whenever it changes on disk (see `persona`), so
+        # it can be swapped mid-party. Called after a change, e.g. to throw out
+        # prepared answers written with the old one.
+        self.on_persona_change = None
+        self._persona_text = DEFAULT_PERSONA
+        self._persona_stamp = None
+        self.persona   # load it now, so a bad file shows in the log at startup
         self.conversation = Conversation()
         # What the head said to its last few arrivals, newest last. Survives
         # reset() so it can notice a costume it has already seen tonight.
@@ -128,15 +134,47 @@ class Brain:
         """A free request that keeps the connection to Anthropic open."""
         self.client.models.retrieve(self.cfg.model)
 
-    def _load_persona(self) -> str:
+    @property
+    def persona(self) -> str:
+        """The system prompt: persona.md as it is on disk right now.
+
+        Checked on every use, but only re-read when its timestamp or size
+        changes, so the check costs a stat() call. A missing or empty file keeps
+        the last good version (a half-saved edit can't blank the character);
+        with no file at all from the start, the built-in default is used.
+        """
         path = self.cfg.persona_file
-        if path and os.path.exists(path):
+        try:
+            st = os.stat(path)
+        except (OSError, TypeError, ValueError):
+            return self._persona_text
+        stamp = (st.st_mtime_ns, st.st_size)
+        if stamp == self._persona_stamp:
+            return self._persona_text
+        try:
             with open(path, "r", encoding="utf-8") as fh:
                 text = fh.read().strip()
-            if text:
-                log.info("Loaded persona from %s", path)
-                return text
-        return DEFAULT_PERSONA
+        except OSError as exc:
+            log.warning("PERSONA could not read %s (%s); keeping the current one", path, exc)
+            return self._persona_text
+        if not text:
+            return self._persona_text      # mid-save, or emptied: keep the last good one
+        first = self._persona_stamp is None
+        self._persona_stamp = stamp
+        if text == self._persona_text:
+            return text
+        self._persona_text = text
+        if first:
+            log.info("Loaded persona from %s", path)
+        else:
+            log.info("PERSONA %s changed on disk: using the new one (%d characters)",
+                     path, len(text))
+            if self.on_persona_change is not None:
+                try:
+                    self.on_persona_change()
+                except Exception as exc:
+                    log.warning("PERSONA change handler failed: %s", exc)
+        return text
 
     def _extras(self) -> dict:
         extra: dict = {}

@@ -53,6 +53,19 @@ class Preloader:
         self._need.set()
         return sentences
 
+    def clear(self) -> None:
+        """Throw away every prepared reply (they were written with an old
+        persona.md) and wake the refiller to write new ones."""
+        with self._lock:
+            stale = [sentences for q in self._queues.values() for sentences in q]
+            for q in self._queues.values():
+                q.clear()
+        for sentences in stale:
+            for sentence in sentences:
+                self.tts.discard(sentence)
+        log.info("PRELOAD cleared %d prepared replies; rewriting them", len(stale))
+        self._need.set()
+
     def counts(self) -> dict:
         with self._lock:
             return {k: len(q) for k, q in self._queues.items()}
